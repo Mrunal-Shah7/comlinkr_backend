@@ -1,0 +1,30 @@
+/** Matches mobile feed `COUNTRY_NEWS_MAP` — Google News RSS geo + language */
+export const COUNTRY_NEWS_MAP: Record<
+  string,
+  { gl: string; hl: string; flag: string }
+> = {
+  'United States': { gl: 'US', hl: 'en-US', flag: '🇺🇸' },
+  'United Kingdom': { gl: 'GB', hl: 'en-GB', flag: '🇬🇧' },
+  Canada: { gl: 'CA', hl: 'en-CA', flag: '🇨🇦' },
+  Australia: { gl: 'AU', hl: 'en-AU', flag: '🇦🇺' },
+  India: { gl: 'IN', hl: 'en-IN', flag: '🇮🇳' },
+  Germany: { gl: 'DE', hl: 'de', flag: '🇩🇪' },
+  France: { gl: 'FR', hl: 'fr', flag: '🇫🇷' },
+  Japan: { gl: 'JP', hl: 'ja', flag: '🇯🇵' },
+  Brazil: { gl: 'BR', hl: 'pt-BR', flag: '🇧🇷' },
+  Mexico: { gl: 'MX', hl: 'es-419', flag: '🇲🇽' },
+  Spain: { gl: 'ES', hl: 'es', flag: '🇪🇸' },
+  Italy: { gl: 'IT', hl: 'it', flag: '🇮🇹' },
+  Netherlands: { gl: 'NL', hl: 'nl', flag: '🇳🇱' },
+  'South Korea': { gl: 'KR', hl: 'ko', flag: '🇰🇷' },
+  Nigeria: { gl: 'NG', hl: 'en-NG', flag: '🇳🇬' },
+  'South Africa': { gl: 'ZA', hl: 'en-ZA', flag: '🇿🇦' },
+  'United Arab Emirates': { gl: 'AE', hl: 'ar', flag: '🇦🇪' },
+  Singapore: { gl: 'SG', hl: 'en-SG', flag: '🇸🇬' },
+  'New Zealand': { gl: 'NZ', hl: 'en-NZ', flag: '🇳🇿' },
+  Ireland: { gl: 'IE', hl: 'en-IE', flag: '🇮🇪' },
+  Pakistan: { gl: 'PK', hl: 'en-PK', flag: '🇵🇰' },
+  Bangladesh: { gl: 'BD', hl: 'bn', flag: '🇧🇩' },
+  Philippines: { gl: 'PH', hl: 'en-PH', flag: '🇵🇭' },
+  Kenya: { gl: 'KE', hl: 'en-KE', flag: '🇰🇪' },
+};

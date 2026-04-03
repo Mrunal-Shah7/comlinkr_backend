@@ -1,0 +1,128 @@
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+} from '@nestjs/common';
+import {
+  ApiOperation,
+  ApiQuery,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { RoommatesService } from './roommates.service';
+import { UpdatePreferencesDto } from './dto/update-preferences.dto';
+import { RoommatesQueryDto } from './dto/roommates-query.dto';
+import { CreateRoommateListingDto } from './dto/create-roommate-listing.dto';
+import { PatchRoommateListingDto } from './dto/patch-roommate-listing.dto';
+
+@ApiTags('Roommates')
+@Controller('roommates')
+export class RoommatesController {
+  constructor(private readonly roommatesService: RoommatesService) {}
+
+  @Get('matches')
+  @ApiOperation({ summary: 'AI-style best-match list (same as search with sort=best_match)' })
+  @ApiQuery({ name: 'page', required: false })
+  @ApiQuery({ name: 'limit', required: false })
+  @ApiQuery({ name: 'city', required: false })
+  getMatches(
+    @CurrentUser('id') userId: string,
+    @Query() query: RoommatesQueryDto,
+  ) {
+    return this.roommatesService.getMatches(userId, query);
+  }
+
+  @Get('preferences')
+  @ApiOperation({ summary: 'Get roommate search preferences' })
+  getPreferences(@CurrentUser('id') userId: string) {
+    return this.roommatesService.getPreferences(userId);
+  }
+
+  @Get('listing/me')
+  @ApiOperation({ summary: 'Current user roommate listing (if isLooking)' })
+  getMyListing(@CurrentUser('id') userId: string) {
+    return this.roommatesService.getMyRoommateListing(userId);
+  }
+
+  @Post('listing')
+  @ApiOperation({ summary: 'Publish roommate listing (sets isLooking)' })
+  createListing(
+    @CurrentUser('id') userId: string,
+    @Body() dto: CreateRoommateListingDto,
+  ) {
+    return this.roommatesService.upsertMyListing(userId, dto);
+  }
+
+  @Patch('listing')
+  @ApiOperation({ summary: 'Update roommate listing' })
+  patchListing(
+    @CurrentUser('id') userId: string,
+    @Body() dto: PatchRoommateListingDto,
+  ) {
+    return this.roommatesService.patchMyListing(userId, dto);
+  }
+
+  @Delete('listing')
+  @ApiOperation({ summary: 'Remove roommate listing (isLooking=false)' })
+  deleteListing(@CurrentUser('id') userId: string) {
+    return this.roommatesService.deleteMyListing(userId);
+  }
+
+  @Get()
+  @ApiOperation({ summary: 'Search roommates with filters and sort' })
+  @ApiQuery({ name: 'page', required: false })
+  @ApiQuery({ name: 'limit', required: false })
+  @ApiQuery({
+    name: 'sort',
+    required: false,
+    enum: ['best_match', 'budget', 'move_in_soon', 'verified'],
+  })
+  @ApiQuery({ name: 'minBudget', required: false })
+  @ApiQuery({ name: 'maxBudget', required: false })
+  @ApiQuery({ name: 'city', required: false })
+  @ApiResponse({ status: 200, description: 'Paginated roommate cards' })
+  async searchRoommates(
+    @CurrentUser('id') userId: string,
+    @Query() query: RoommatesQueryDto,
+  ) {
+    return this.roommatesService.searchRoommates(userId, query);
+  }
+
+  @Patch('preferences')
+  @ApiOperation({ summary: 'Update own roommate preferences' })
+  @ApiResponse({ status: 200, description: 'Preferences updated' })
+  async updatePreferences(
+    @CurrentUser('id') userId: string,
+    @Body() dto: UpdatePreferencesDto,
+  ) {
+    return this.roommatesService.updatePreferences(userId, dto);
+  }
+
+  @Get(':id')
+  @ApiOperation({ summary: 'Get roommate profile with compatibility' })
+  @ApiResponse({ status: 200, description: 'Roommate detail' })
+  @ApiResponse({ status: 404, description: 'Not found' })
+  async getRoommateProfile(
+    @CurrentUser('id') userId: string,
+    @Param('id') id: string,
+  ) {
+    return this.roommatesService.getRoommateProfile(userId, id);
+  }
+
+  @Post(':id/connect')
+  @ApiOperation({ summary: 'Send connection request / start conversation' })
+  @ApiResponse({ status: 201, description: 'Connection request sent or existing conversation' })
+  @ApiResponse({ status: 404, description: 'User not found' })
+  async sendConnectionRequest(
+    @CurrentUser('id') userId: string,
+    @Param('id') id: string,
+  ) {
+    return this.roommatesService.sendConnectionRequest(userId, id);
+  }
+}

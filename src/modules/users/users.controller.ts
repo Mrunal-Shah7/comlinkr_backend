@@ -1,0 +1,145 @@
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  UploadedFile,
+  UseInterceptors,
+} from '@nestjs/common';
+import {
+  ApiTags,
+  ApiOperation,
+  ApiResponse,
+  ApiBody,
+  ApiConsumes,
+  ApiQuery,
+} from '@nestjs/swagger';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { UsersService } from './users.service';
+import { PostsService } from '../posts/posts.service';
+import { UpdateProfileDto } from './dto/update-profile.dto';
+import { PaginationDto } from '../../common/dto/pagination.dto';
+
+const AVATAR_MAX_SIZE = 5 * 1024 * 1024;
+
+@ApiTags('Users')
+@Controller('users')
+export class UsersController {
+  constructor(
+    private readonly usersService: UsersService,
+    private readonly postsService: PostsService,
+  ) {}
+
+  @Get('me')
+  @ApiOperation({ summary: 'Get full profile (relations, stats, achievements)' })
+  @ApiResponse({ status: 200, description: 'Full profile' })
+  @ApiResponse({ status: 401, description: 'Not authenticated' })
+  async getMyProfile(@CurrentUser('id') userId: string) {
+    return this.usersService.getMyProfile(userId);
+  }
+
+  @Patch('me')
+  @ApiOperation({ summary: 'Update basic profile fields' })
+  @ApiBody({ type: UpdateProfileDto })
+  @ApiResponse({ status: 200, description: 'Updated full profile' })
+  @ApiResponse({ status: 409, description: 'Username already in use' })
+  async updateProfile(
+    @CurrentUser('id') userId: string,
+    @Body() dto: UpdateProfileDto,
+  ) {
+    return this.usersService.updateProfile(userId, dto);
+  }
+
+  @Post('me/avatar')
+  @UseInterceptors(
+    FileInterceptor('avatar', {
+      limits: { fileSize: AVATAR_MAX_SIZE },
+    }),
+  )
+  @ApiOperation({ summary: 'Upload profile photo' })
+  @ApiConsumes('multipart/form-data')
+  @ApiBody({
+    schema: {
+      type: 'object',
+      properties: {
+        avatar: { type: 'string', format: 'binary' },
+      },
+    },
+  })
+  @ApiResponse({ status: 200, description: 'Avatar URL' })
+  @ApiResponse({ status: 400, description: 'No file / invalid type / too large' })
+  async uploadAvatar(
+    @CurrentUser('id') userId: string,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    if (!file) {
+      throw new BadRequestException({
+        code: 'BAD_REQUEST',
+        message: 'No file uploaded',
+      });
+    }
+    return this.usersService.uploadAvatar(userId, file);
+  }
+
+  @Delete('me/avatar')
+  @ApiOperation({ summary: 'Remove profile photo' })
+  @ApiResponse({ status: 200, description: 'Avatar removed' })
+  @ApiResponse({ status: 400, description: 'No avatar to remove' })
+  async removeAvatar(@CurrentUser('id') userId: string) {
+    return this.usersService.removeAvatar(userId);
+  }
+
+  @Get('me/stats')
+  @ApiOperation({ summary: 'Get profile stats only' })
+  @ApiResponse({ status: 200, description: 'Stats object' })
+  async getMyStats(@CurrentUser('id') userId: string) {
+    return this.usersService.getMyStats(userId);
+  }
+
+  @Get('me/achievements')
+  @ApiOperation({ summary: 'Get achievement badges only' })
+  @ApiResponse({ status: 200, description: 'Achievements array' })
+  async getMyAchievements(@CurrentUser('id') userId: string) {
+    return this.usersService.getMyAchievements(userId);
+  }
+
+  @Get('me/posts')
+  @ApiOperation({ summary: 'All content by current user (unified)' })
+  @ApiQuery({ name: 'page', required: false })
+  @ApiQuery({ name: 'limit', required: false })
+  @ApiResponse({ status: 200, description: 'Paginated unified posts' })
+  async getMyPosts(
+    @CurrentUser('id') userId: string,
+    @Query() query: PaginationDto,
+  ) {
+    return this.postsService.getMyPosts(userId, query);
+  }
+
+  @Get(':username/by-username')
+  @ApiOperation({ summary: 'Get public profile by username' })
+  @ApiResponse({ status: 200, description: 'Public profile' })
+  @ApiResponse({ status: 404, description: 'User not found' })
+  async getUserByUsername(
+    @CurrentUser('id') requestingUserId: string,
+    @Param('username') username: string,
+  ) {
+    return this.usersService.getUserByUsername(requestingUserId, username);
+  }
+
+  @Get(':id')
+  @ApiOperation({ summary: 'Get public profile by ID' })
+  @ApiResponse({ status: 200, description: 'Public profile' })
+  @ApiResponse({ status: 404, description: 'User not found' })
+  async getUserById(
+    @CurrentUser('id') requestingUserId: string,
+    @Param('id') id: string,
+  ) {
+    return this.usersService.getUserById(requestingUserId, id);
+  }
+}

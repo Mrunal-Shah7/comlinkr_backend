@@ -37,7 +37,7 @@ async function bootstrap() {
   const nodeEnv = configService.get<string>('NODE_ENV', 'development');
   // Mobile / Expo web: empty CORS_ORIGINS + dev → reflect Origin so LAN testing works.
   app.enableCors({
-    origin: originList.length > 0 ? originList : nodeEnv !== 'production',
+    origin: originList.includes('*') ? true : originList.length > 0 ? originList : nodeEnv !== 'production',
     credentials: true,
   });
 

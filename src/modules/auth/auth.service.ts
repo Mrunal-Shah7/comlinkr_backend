@@ -61,8 +61,33 @@ export class AuthService {
     private readonly otpService: OtpService,
     private readonly configService: ConfigService,
   ) {
-    const googleClientId = this.configService.get<string>('GOOGLE_CLIENT_ID');
-    this.googleClient = new OAuth2Client(googleClientId);
+    const primary = this.configService.get<string>('GOOGLE_CLIENT_ID');
+    this.googleClient = new OAuth2Client(primary);
+  }
+
+  /**
+   * ID tokens are minted for the OAuth client that ran the sign-in flow (Web vs Android vs iOS).
+   * `verifyIdToken` must allow every client ID you use in Expo / web — same Google Cloud project.
+   */
+  private getGoogleVerifyAudiences(): string[] {
+    const ids = [
+      this.configService.get<string>('GOOGLE_CLIENT_ID'),
+      this.configService.get<string>('GOOGLE_ANDROID_CLIENT_ID'),
+      this.configService.get<string>('GOOGLE_IOS_CLIENT_ID'),
+    ];
+    const list = this.configService.get<string>('GOOGLE_CLIENT_IDS');
+    if (list?.trim()) {
+      ids.push(...list.split(',').map((s) => s.trim()).filter(Boolean));
+    }
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const id of ids) {
+      if (id && !seen.has(id)) {
+        seen.add(id);
+        out.push(id);
+      }
+    }
+    return out;
   }
 
   private toAuthSession(user: {
@@ -324,12 +349,24 @@ export class AuthService {
     dto: GoogleAuthDto,
     req: Request,
   ): Promise<AuthSessionPayload | { needsUsername: true; tempToken: string }> {
-    const clientId = this.configService.getOrThrow<string>('GOOGLE_CLIENT_ID');
-    let payload: { email?: string; email_verified?: boolean; sub: string; name?: string };
+    const audiences = this.getGoogleVerifyAudiences();
+    if (audiences.length === 0) {
+      throw new UnauthorizedException({
+        code: 'AUTH_INVALID_CREDENTIALS',
+        message:
+          'Google OAuth is not configured on the server (set GOOGLE_CLIENT_ID to match your app’s Google Cloud OAuth clients).',
+      });
+    }
+    let payload: {
+      email?: string;
+      email_verified?: boolean | string;
+      sub: string;
+      name?: string;
+    };
     try {
       const ticket = await this.googleClient.verifyIdToken({
         idToken: dto.idToken,
-        audience: clientId,
+        audience: audiences.length === 1 ? audiences[0]! : audiences,
       });
       payload = ticket.getPayload() as any;
     } catch {
@@ -344,7 +381,11 @@ export class AuthService {
         message: 'Invalid Google token.',
       });
     }
-    if (payload.email_verified !== true) {
+    const emailVerified =
+      payload.email_verified === true ||
+      payload.email_verified === 'true' ||
+      (payload as { email_verified?: number }).email_verified === 1;
+    if (!emailVerified) {
       throw new UnauthorizedException({
         message: 'Google email not verified.',
       });

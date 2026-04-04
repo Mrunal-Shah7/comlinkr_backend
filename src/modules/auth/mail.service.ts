@@ -11,15 +11,15 @@ export class MailService {
     code: string,
     type: 'REGISTRATION' | 'PASSWORD_RESET',
   ): Promise<void> {
-    const mailUser = this.configService.get<string>('MAIL_USER', '');
-    const mailPass = this.configService.get<string>('MAIL_PASSWORD', '');
-    const mailFrom = this.configService.get<string>('MAIL_FROM', '') || mailUser;
+    const smtpUser = this.configService.get<string>('SES_SMTP_USER', '');
+    const smtpPass = this.configService.get<string>('SES_SMTP_PASSWORD', '');
+    const fromEmail = this.configService.get<string>('SES_FROM_EMAIL', '').trim();
     const isDev = this.configService.get<string>('NODE_ENV') === 'development';
     const credentialsMissing =
-      !mailUser ||
-      !mailPass ||
-      mailUser === 'placeholder@gmail.com' ||
-      mailPass === 'placeholder';
+      !smtpUser ||
+      !smtpPass ||
+      !fromEmail ||
+      smtpPass === 'placeholder';
 
     if (credentialsMissing) {
       if (isDev) {
@@ -29,7 +29,6 @@ export class MailService {
     }
 
     const transporter = createMailTransporter(this.configService);
-    const fromUser = mailFrom;
 
     const subject =
       type === 'REGISTRATION'
@@ -59,7 +58,7 @@ export class MailService {
 
     try {
       await transporter.sendMail({
-        from: `"ComLinkr" <${fromUser}>`,
+        from: `"ComLinkr" <${fromEmail}>`,
         to,
         subject,
         html,

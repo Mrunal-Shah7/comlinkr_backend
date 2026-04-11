@@ -8,7 +8,10 @@ import { randomUUID } from 'crypto';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
-import { createPaginationMeta } from '../../common/dto/pagination.dto';
+import {
+  PaginationDto,
+  createPaginationMeta,
+} from '../../common/dto/pagination.dto';
 import { NotificationsService } from '../notifications/notifications.service';
 import { CreateEventDto } from './dto/create-event.dto';
 import { EventsQueryDto } from './dto/events-query.dto';
@@ -51,6 +54,7 @@ export class EventsService {
       currentUserId && (event.attendees?.length ?? 0) > 0;
     const savedByMe =
       currentUserId && (event.saves?.length ?? 0) > 0;
+    const isSaved = !!savedByMe;
     const imageRows = event.eventImages ?? [];
     const sortedImages = [...imageRows].sort(
       (a: { order: number }, b: { order: number }) => a.order - b.order,
@@ -86,14 +90,24 @@ export class EventsService {
         avatarUrl: event.author.avatarUrl
           ? await this.buildFileUrl(event.author.avatarUrl)
           : null,
+        badges: (event.author.userBadges ?? []).map((b: { badgeType: string }) => ({
+          badgeType: b.badgeType,
+        })),
       },
       isAttending: !!isAttending,
       /** Mobile alias for RSVP state */
       registeredByMe: !!isAttending,
       savedByMe,
+      isSaved,
       isFull,
       isOwner: currentUserId ? event.authorId === currentUserId : false,
       spotsLeft,
+      conversationId: event.conversationId ?? null,
+      canAccessChat: !!(
+        event.conversationId &&
+        currentUserId &&
+        (event.authorId === currentUserId || !!isAttending)
+      ),
     };
   }
 
@@ -143,6 +157,7 @@ export class EventsService {
               username: true,
               fullName: true,
               avatarUrl: true,
+              userBadges: { select: { badgeType: true } },
             },
           },
           attendees: {
@@ -175,6 +190,7 @@ export class EventsService {
             username: true,
             fullName: true,
             avatarUrl: true,
+            userBadges: { select: { badgeType: true } },
           },
         },
         attendees: {
@@ -374,6 +390,7 @@ export class EventsService {
       return {
         attending: true,
         attendeeCount: event.attendeeCount,
+        conversationId: event.conversationId ?? null,
       };
     }
     const capacity = event.capacity;
@@ -383,22 +400,185 @@ export class EventsService {
         message: 'This event is full.',
       });
     }
-    const result = await this.prisma.$transaction(async (tx) => {
-      await tx.eventAttendee.create({
-        data: { eventId, userId },
-      });
-      const updated = await tx.event.update({
-        where: { id: eventId },
-        data: { attendeeCount: { increment: 1 } },
-      });
-      return updated.attendeeCount;
-    });
-    return { attending: true, attendeeCount: result };
+
+    return this.prisma.$transaction(
+      async (tx) => {
+        const fresh = await tx.event.findUnique({
+          where: { id: eventId },
+          select: {
+            id: true,
+            title: true,
+            authorId: true,
+            attendeeCount: true,
+            capacity: true,
+            conversationId: true,
+          },
+        });
+        if (!fresh) {
+          throw new NotFoundException({
+            code: 'RESOURCE_NOT_FOUND',
+            message: 'Event not found',
+          });
+        }
+        if (fresh.authorId === userId) {
+          throw new BadRequestException({
+            code: 'BAD_REQUEST',
+            message: 'You cannot RSVP to your own event.',
+          });
+        }
+
+        const existingAttendee = await tx.eventAttendee.findUnique({
+          where: { eventId_userId: { eventId, userId } },
+        });
+        if (existingAttendee) {
+          const e2 = await tx.event.findUnique({
+            where: { id: eventId },
+            select: { attendeeCount: true, conversationId: true },
+          });
+          return {
+            attending: true,
+            attendeeCount: e2!.attendeeCount,
+            conversationId: e2!.conversationId,
+          };
+        }
+
+        if (
+          fresh.capacity != null &&
+          fresh.attendeeCount >= fresh.capacity
+        ) {
+          throw new BadRequestException({
+            code: 'BAD_REQUEST',
+            message: 'This event is full.',
+          });
+        }
+
+        const preCount = fresh.attendeeCount;
+
+        await tx.eventAttendee.create({
+          data: { eventId, userId },
+        });
+        await tx.event.update({
+          where: { id: eventId },
+          data: { attendeeCount: { increment: 1 } },
+        });
+
+        const post = await tx.event.findUnique({
+          where: { id: eventId },
+          select: {
+            attendeeCount: true,
+            conversationId: true,
+            title: true,
+            authorId: true,
+          },
+        });
+        if (!post) {
+          throw new NotFoundException({
+            code: 'RESOURCE_NOT_FOUND',
+            message: 'Event not found',
+          });
+        }
+
+        if (post.conversationId) {
+          const cid = post.conversationId;
+          const memberExists = await tx.conversationMember.findUnique({
+            where: {
+              conversationId_userId: { conversationId: cid, userId },
+            },
+          });
+          if (!memberExists) {
+            const u = await tx.user.findUnique({
+              where: { id: userId },
+              select: { username: true },
+            });
+            const uname = u?.username ?? 'Someone';
+            await tx.conversationMember.create({
+              data: {
+                conversationId: cid,
+                userId,
+                role: 'MEMBER',
+                status: 'ACCEPTED',
+              },
+            });
+            await tx.message.create({
+              data: {
+                conversationId: cid,
+                senderId: userId,
+                content: `${uname} joined the event`,
+                type: 'SYSTEM',
+              },
+            });
+          }
+          return {
+            attending: true,
+            attendeeCount: post.attendeeCount,
+            conversationId: cid,
+          };
+        }
+
+        if (preCount === 0) {
+          const conv = await tx.conversation.create({
+            data: {
+              type: 'GROUP',
+              title: post.title,
+              contextType: 'EVENT',
+              contextId: eventId,
+              createdById: post.authorId,
+            },
+          });
+          await tx.conversationMember.createMany({
+            data: [
+              {
+                conversationId: conv.id,
+                userId: post.authorId,
+                role: 'ADMIN',
+                status: 'ACCEPTED',
+              },
+              {
+                conversationId: conv.id,
+                userId,
+                role: 'MEMBER',
+                status: 'ACCEPTED',
+              },
+            ],
+          });
+          const welcome = `Welcome to the ${post.title} event chat! Say hi to your fellow attendees 👋`;
+          await tx.message.create({
+            data: {
+              conversationId: conv.id,
+              senderId: post.authorId,
+              content: welcome,
+              type: 'SYSTEM',
+            },
+          });
+          await tx.event.update({
+            where: { id: eventId },
+            data: { conversationId: conv.id },
+          });
+          return {
+            attending: true,
+            attendeeCount: post.attendeeCount,
+            conversationId: conv.id,
+          };
+        }
+
+        return {
+          attending: true,
+          attendeeCount: post.attendeeCount,
+          conversationId: post.conversationId,
+        };
+      },
+      {
+        isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        maxWait: 10000,
+        timeout: 20000,
+      },
+    );
   }
 
   async cancelAttendance(userId: string, eventId: string) {
     const event = await this.prisma.event.findUnique({
       where: { id: eventId },
+      select: { attendeeCount: true, conversationId: true },
     });
     if (!event) {
       throw new NotFoundException({
@@ -412,31 +592,95 @@ export class EventsService {
       },
     });
     if (!attendee) {
-      return { attending: false, attendeeCount: event.attendeeCount };
+      return {
+        attending: false,
+        attendeeCount: event.attendeeCount,
+        conversationId: event.conversationId,
+      };
     }
+
+    const leaver = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { username: true },
+    });
+    const leaverName = leaver?.username ?? 'Someone';
+
     const newCount = await this.prisma.$transaction(async (tx) => {
+      const ev = await tx.event.findUnique({
+        where: { id: eventId },
+        select: { attendeeCount: true, conversationId: true },
+      });
+      if (!ev) {
+        throw new NotFoundException({
+          code: 'RESOURCE_NOT_FOUND',
+          message: 'Event not found',
+        });
+      }
+
+      if (ev.conversationId) {
+        const mem = await tx.conversationMember.findUnique({
+          where: {
+            conversationId_userId: {
+              conversationId: ev.conversationId,
+              userId,
+            },
+          },
+        });
+        if (mem) {
+          await tx.conversationMember.delete({
+            where: { id: mem.id },
+          });
+          await tx.message.create({
+            data: {
+              conversationId: ev.conversationId,
+              senderId: userId,
+              content: `${leaverName} left the event`,
+              type: 'SYSTEM',
+            },
+          });
+        }
+      }
+
       await tx.eventAttendee.delete({
         where: { id: attendee.id },
       });
-      const next = Math.max(0, event.attendeeCount - 1);
+      const next = Math.max(0, ev.attendeeCount - 1);
       await tx.event.update({
         where: { id: eventId },
         data: { attendeeCount: next },
       });
       return next;
     });
-    return { attending: false, attendeeCount: newCount };
+
+    const after = await this.prisma.event.findUnique({
+      where: { id: eventId },
+      select: { conversationId: true },
+    });
+
+    return {
+      attending: false,
+      attendeeCount: newCount,
+      conversationId: after?.conversationId ?? null,
+    };
   }
 
   /** Mobile: same as attend; response uses { registered, attendees }. */
   async registerForEvent(userId: string, eventId: string) {
     const r = await this.attendEvent(userId, eventId);
-    return { registered: r.attending, attendees: r.attendeeCount };
+    return {
+      registered: r.attending,
+      attendees: r.attendeeCount,
+      conversationId: r.conversationId ?? null,
+    };
   }
 
   async cancelRegistration(userId: string, eventId: string) {
     const r = await this.cancelAttendance(userId, eventId);
-    return { registered: r.attending, attendees: r.attendeeCount };
+    return {
+      registered: r.attending,
+      attendees: r.attendeeCount,
+      conversationId: r.conversationId ?? null,
+    };
   }
 
   private categoryEmoji(category: string): string {
@@ -542,34 +786,38 @@ export class EventsService {
     return Promise.all(rows.map((r) => this.formatEvent(r.event, userId)));
   }
 
-  async getSavedEvents(userId: string, query: { page?: number; limit?: number }) {
+  async getSavedEvents(userId: string, query: PaginationDto) {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
-    const where = { saves: { some: { userId } } };
-    const [items, total] = await Promise.all([
-      this.prisma.event.findMany({
-        where,
-        orderBy: { date: 'asc' },
+    const [rows, total] = await this.prisma.$transaction([
+      this.prisma.eventSave.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
         skip: (page - 1) * limit,
         take: limit,
         include: {
-          author: {
-            select: {
-              id: true,
-              username: true,
-              fullName: true,
-              avatarUrl: true,
+          event: {
+            include: {
+              author: {
+                select: {
+                  id: true,
+                  username: true,
+                  fullName: true,
+                  avatarUrl: true,
+                  userBadges: { select: { badgeType: true } },
+                },
+              },
+              attendees: { where: { userId }, select: { id: true } },
+              saves: { where: { userId }, select: { id: true } },
+              eventImages: { orderBy: { order: 'asc' } },
             },
           },
-          attendees: { where: { userId }, select: { id: true } },
-          saves: { where: { userId }, select: { id: true } },
-          eventImages: { orderBy: { order: 'asc' } },
         },
       }),
-      this.prisma.event.count({ where }),
+      this.prisma.eventSave.count({ where: { userId } }),
     ]);
     const data = await Promise.all(
-      items.map((e) => this.formatEvent(e, userId)),
+      rows.map((r) => this.formatEvent(r.event, userId)),
     );
     return { data, meta: createPaginationMeta(page, limit, total) };
   }
@@ -674,11 +922,23 @@ export class EventsService {
         message: 'Only the host can delete this event.',
       });
     }
-    await this.prisma.$transaction([
-      this.prisma.eventSave.deleteMany({ where: { eventId } }),
-      this.prisma.eventAttendee.deleteMany({ where: { eventId } }),
-      this.prisma.event.delete({ where: { id: eventId } }),
-    ]);
+    await this.prisma.$transaction(async (tx) => {
+      const ev = await tx.event.findUnique({
+        where: { id: eventId },
+        select: { conversationId: true },
+      });
+      const cid = ev?.conversationId;
+      if (cid) {
+        await tx.conversationMember.deleteMany({
+          where: { conversationId: cid },
+        });
+        await tx.message.deleteMany({ where: { conversationId: cid } });
+        await tx.conversation.delete({ where: { id: cid } });
+      }
+      await tx.eventSave.deleteMany({ where: { eventId } });
+      await tx.eventAttendee.deleteMany({ where: { eventId } });
+      await tx.event.delete({ where: { id: eventId } });
+    });
     return { ok: true };
   }
 

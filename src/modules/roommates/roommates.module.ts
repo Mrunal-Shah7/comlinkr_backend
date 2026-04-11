@@ -7,5 +7,6 @@ import { RoommatesService } from './roommates.service';
   imports: [PrismaModule],
   controllers: [RoommatesController],
   providers: [RoommatesService],
+  exports: [RoommatesService],
 })
 export class RoommatesModule {}

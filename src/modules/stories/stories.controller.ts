@@ -4,6 +4,7 @@ import {
   Get,
   Param,
   Post,
+  Query,
   UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
@@ -11,10 +12,12 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import {
   ApiConsumes,
   ApiOperation,
+  ApiQuery,
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { PaginationDto } from '../../common/dto/pagination.dto';
 import { StoriesService } from './stories.service';
 import { CreateStoryDto } from './dto/create-story.dto';
 
@@ -43,6 +46,27 @@ export class StoriesController {
     return this.storiesService.createStory(userId, dto, file);
   }
 
+  /** Must be before @Get(':id') so "me" is not parsed as an id. */
+  @Get('me')
+  @ApiOperation({ summary: 'Current user’s active stories' })
+  @ApiResponse({ status: 200, description: 'Array of active stories for the viewer' })
+  async getMyStories(@CurrentUser('id') userId: string) {
+    return this.storiesService.getMyStories(userId);
+  }
+
+  /** Must be before @Get(':id'). */
+  @Get('saved')
+  @ApiOperation({ summary: "Get user's saved stories" })
+  @ApiQuery({ name: 'page', required: false })
+  @ApiQuery({ name: 'limit', required: false })
+  @ApiResponse({ status: 200, description: 'Paginated saved stories' })
+  async getSavedStories(
+    @CurrentUser('id') userId: string,
+    @Query() query: PaginationDto,
+  ) {
+    return this.storiesService.getSavedStories(userId, query);
+  }
+
   @Get()
   @ApiOperation({ summary: 'Active stories in user\'s city' })
   @ApiResponse({ status: 200, description: 'Array of active stories' })
@@ -59,5 +83,15 @@ export class StoriesController {
     @Param('id') id: string,
   ) {
     return this.storiesService.viewStory(userId, id);
+  }
+
+  @Post(':id/save')
+  @ApiOperation({ summary: 'Toggle save/bookmark on a story' })
+  @ApiResponse({ status: 200, description: 'Save state' })
+  async toggleStorySave(
+    @CurrentUser('id') userId: string,
+    @Param('id') id: string,
+  ) {
+    return this.storiesService.toggleStorySave(userId, id);
   }
 }

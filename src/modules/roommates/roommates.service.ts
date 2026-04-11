@@ -1,11 +1,20 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import {
   ConversationContextType,
   ConversationType,
   MessageType,
+  NotificationType,
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
-import { createPaginationMeta } from '../../common/dto/pagination.dto';
+import { NotificationsService } from '../notifications/notifications.service';
+import {
+  PaginationDto,
+  createPaginationMeta,
+} from '../../common/dto/pagination.dto';
 import { UpdatePreferencesDto } from './dto/update-preferences.dto';
 import { RoommatesQueryDto } from './dto/roommates-query.dto';
 import type { CreateRoommateListingDto } from './dto/create-roommate-listing.dto';
@@ -61,12 +70,126 @@ type UserWithRelations = {
   userBadges: Array<{ badgeType: string }>;
 };
 
+export type RoommateConnectionStatus =
+  | null
+  | 'pending_sent'
+  | 'pending_received'
+  | 'accepted';
+
 @Injectable()
 export class RoommatesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notificationsService: NotificationsService,
+  ) {}
 
   private buildFileUrl(url: string): string {
     return url;
+  }
+
+  /** Same 1:1 direct-thread predicate as MessagingService.buildDirectPairWhere (no cross-import). */
+  private resolvePairConnectionStatus(
+    currentUserId: string,
+    members: Array<{ userId: string; status: string }>,
+    conversationId: string,
+  ): { status: RoommateConnectionStatus; conversationId: string | null } {
+    if (members.length !== 2) {
+      return { status: null, conversationId: null };
+    }
+    const me = members.find((m) => m.userId === currentUserId);
+    const them = members.find((m) => m.userId !== currentUserId);
+    if (!me || !them) {
+      return { status: null, conversationId: null };
+    }
+    if (me.status === 'BLOCKED') {
+      return { status: null, conversationId: null };
+    }
+    if (me.status === 'ACCEPTED' && them.status === 'ACCEPTED') {
+      return { status: 'accepted', conversationId };
+    }
+    if (me.status === 'ACCEPTED' && them.status === 'PENDING') {
+      return { status: 'pending_sent', conversationId };
+    }
+    if (me.status === 'PENDING') {
+      return { status: 'pending_received', conversationId };
+    }
+    return { status: null, conversationId: null };
+  }
+
+  /**
+   * One query: all DIRECT conversations involving the current user and any target in the slice.
+   * First match per target wins (conversations ordered by createdAt desc).
+   */
+  private async batchConnectionStatuses(
+    currentUserId: string,
+    targetUserIds: string[],
+  ): Promise<Map<string, { status: RoommateConnectionStatus; conversationId: string | null }>> {
+    const map = new Map<
+      string,
+      { status: RoommateConnectionStatus; conversationId: string | null }
+    >();
+    for (const id of targetUserIds) {
+      map.set(id, { status: null, conversationId: null });
+    }
+    if (targetUserIds.length === 0) {
+      return map;
+    }
+    const targetSet = new Set(targetUserIds);
+    const conversations = await this.prisma.conversation.findMany({
+      where: {
+        type: ConversationType.DIRECT,
+        AND: [
+          { members: { some: { userId: currentUserId } } },
+          { members: { some: { userId: { in: targetUserIds } } } },
+        ],
+      },
+      include: {
+        members: { select: { userId: true, status: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    const assigned = new Set<string>();
+    for (const c of conversations) {
+      if (c.members.length !== 2) continue;
+      const otherId = c.members.find((m) => m.userId !== currentUserId)?.userId;
+      if (!otherId || !targetSet.has(otherId) || assigned.has(otherId)) continue;
+      const resolved = this.resolvePairConnectionStatus(
+        currentUserId,
+        c.members,
+        c.id,
+      );
+      map.set(otherId, resolved);
+      assigned.add(otherId);
+    }
+    return map;
+  }
+
+  private async getConnectionStatus(
+    currentUserId: string,
+    targetUserId: string,
+  ): Promise<{ status: RoommateConnectionStatus; conversationId: string | null }> {
+    const batch = await this.batchConnectionStatuses(currentUserId, [targetUserId]);
+    return batch.get(targetUserId) ?? { status: null, conversationId: null };
+  }
+
+  private async findDirectConversationBetween(
+    userIdA: string,
+    userIdB: string,
+  ) {
+    const conversations = await this.prisma.conversation.findMany({
+      where: {
+        type: ConversationType.DIRECT,
+        AND: [
+          { members: { some: { userId: userIdA } } },
+          { members: { some: { userId: userIdB } } },
+        ],
+      },
+      include: {
+        members: { select: { id: true, userId: true, status: true } },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    return conversations.find((c) => c.members.length === 2) ?? null;
   }
 
   private computeCompatibilityScore(
@@ -191,6 +314,9 @@ export class RoommatesService {
     user: UserWithRelations,
     currentUser: UserWithRelations,
     compatibilityScore: number,
+    isSaved: boolean,
+    connectionStatus: RoommateConnectionStatus,
+    conversationId: string | null,
   ) {
     const vibeIdsA = new Set(currentUser.vibes.map((v) => v.id));
     const interestIdsA = new Set(currentUser.interests.map((i) => i.id));
@@ -227,6 +353,9 @@ export class RoommatesService {
       badges: user.userBadges.map((b) => ({ badgeType: b.badgeType })),
       inCommon,
       isVerified: (user.userBadges?.length ?? 0) > 0,
+      isSaved,
+      connectionStatus,
+      conversationId,
     };
   }
 
@@ -319,9 +448,31 @@ export class RoommatesService {
 
     const total = withScores.length;
     const slice = withScores.slice((page - 1) * limit, page * limit);
-    const data = slice.map(({ user, score }) =>
-      this.formatRoommateCard(user, currentUser as UserWithRelations, score),
-    );
+    const targetIds = slice.map(({ user }) => user.id);
+    const [savedRows, connMap] = await Promise.all([
+      targetIds.length === 0
+        ? Promise.resolve([] as { savedUserId: string }[])
+        : this.prisma.roommateSave.findMany({
+            where: { userId, savedUserId: { in: targetIds } },
+            select: { savedUserId: true },
+          }),
+      this.batchConnectionStatuses(userId, targetIds),
+    ]);
+    const savedSet = new Set(savedRows.map((r) => r.savedUserId));
+    const data = slice.map(({ user, score }) => {
+      const conn = connMap.get(user.id) ?? {
+        status: null as RoommateConnectionStatus,
+        conversationId: null,
+      };
+      return this.formatRoommateCard(
+        user,
+        currentUser as UserWithRelations,
+        score,
+        savedSet.has(user.id),
+        conn.status,
+        conn.conversationId,
+      );
+    });
     return { data, meta: createPaginationMeta(page, limit, total) };
   }
 
@@ -382,7 +533,23 @@ export class RoommatesService {
     const cu = currentUser as UserWithRelations;
     const tu = target as UserWithRelations;
     const compatibilityScore = this.computeCompatibilityScore(cu, tu);
-    const card = this.formatRoommateCard(tu, cu, compatibilityScore);
+    const [saveRow, conn] = await Promise.all([
+      this.prisma.roommateSave.findUnique({
+        where: {
+          userId_savedUserId: { userId, savedUserId: roommateId },
+        },
+        select: { id: true },
+      }),
+      this.getConnectionStatus(userId, roommateId),
+    ]);
+    const card = this.formatRoommateCard(
+      tu,
+      cu,
+      compatibilityScore,
+      !!saveRow,
+      conn.status,
+      conn.conversationId,
+    );
     return {
       ...card,
       compatibilityBreakdown: {
@@ -510,10 +677,90 @@ export class RoommatesService {
       });
       return conv;
     });
+    await this.notificationsService.createNotification({
+      userId: roommateId,
+      type: NotificationType.MESSAGE,
+      title: 'New connection request',
+      body: `${initiator.username} wants to connect as a potential roommate`,
+      referenceType: 'CONVERSATION',
+      referenceId: conversation.id,
+      actorId: userId,
+    });
     return {
       message: 'Connection request sent',
       conversationId: conversation.id,
     };
+  }
+
+  async acceptConnectionRequest(currentUserId: string, requesterId: string) {
+    const conv = await this.findDirectConversationBetween(
+      currentUserId,
+      requesterId,
+    );
+    if (!conv) {
+      throw new NotFoundException({
+        code: 'RESOURCE_NOT_FOUND',
+        message: 'Conversation not found',
+      });
+    }
+    const myMember = conv.members.find((m) => m.userId === currentUserId);
+    if (!myMember || myMember.status !== 'PENDING') {
+      throw new BadRequestException({
+        code: 'BAD_REQUEST',
+        message: 'No pending connection request to accept',
+      });
+    }
+    await this.prisma.conversationMember.update({
+      where: { id: myMember.id },
+      data: { status: 'ACCEPTED' },
+    });
+    await this.prisma.message.create({
+      data: {
+        conversationId: conv.id,
+        senderId: currentUserId,
+        content: 'Connection accepted! You can now chat.',
+        type: MessageType.SYSTEM,
+      },
+    });
+    const me = await this.prisma.user.findUnique({
+      where: { id: currentUserId },
+      select: { username: true },
+    });
+    await this.notificationsService.createNotification({
+      userId: requesterId,
+      type: NotificationType.MESSAGE,
+      title: 'Connection accepted',
+      body: `${me?.username ?? 'Someone'} accepted your roommate connection request`,
+      referenceType: 'CONVERSATION',
+      referenceId: conv.id,
+      actorId: currentUserId,
+    });
+    return { conversationId: conv.id, status: 'accepted' as const };
+  }
+
+  async declineConnectionRequest(currentUserId: string, requesterId: string) {
+    const conv = await this.findDirectConversationBetween(
+      currentUserId,
+      requesterId,
+    );
+    if (!conv) {
+      throw new NotFoundException({
+        code: 'RESOURCE_NOT_FOUND',
+        message: 'Conversation not found',
+      });
+    }
+    const myMember = conv.members.find((m) => m.userId === currentUserId);
+    if (!myMember || myMember.status !== 'PENDING') {
+      throw new BadRequestException({
+        code: 'BAD_REQUEST',
+        message: 'No pending connection request to decline',
+      });
+    }
+    await this.prisma.conversationMember.update({
+      where: { id: myMember.id },
+      data: { status: 'BLOCKED' },
+    });
+    return { status: 'declined' as const };
   }
 
   async getPreferences(userId: string) {
@@ -678,6 +925,113 @@ export class RoommatesService {
   async deleteMyListing(userId: string) {
     await this.updatePreferences(userId, { isLooking: false });
     return { ok: true };
+  }
+
+  async toggleRoommateSave(currentUserId: string, targetUserId: string) {
+    if (currentUserId === targetUserId) {
+      throw new BadRequestException({
+        code: 'BAD_REQUEST',
+        message: 'You cannot save your own profile',
+      });
+    }
+    const target = await this.prisma.user.findUnique({
+      where: { id: targetUserId },
+      include: { roommatePreferences: true },
+    });
+    if (!target || !target.isActive) {
+      throw new NotFoundException({
+        code: 'RESOURCE_NOT_FOUND',
+        message: 'User not found',
+      });
+    }
+    const prefs = target.roommatePreferences;
+    if (!prefs || !prefs.isLooking) {
+      throw new BadRequestException({
+        code: 'BAD_REQUEST',
+        message: 'This user is not an active roommate seeker',
+      });
+    }
+    return this.prisma.$transaction(async (tx) => {
+      const existing = await tx.roommateSave.findUnique({
+        where: {
+          userId_savedUserId: {
+            userId: currentUserId,
+            savedUserId: targetUserId,
+          },
+        },
+      });
+      if (existing) {
+        await tx.roommateSave.delete({ where: { id: existing.id } });
+        return { saved: false };
+      }
+      await tx.roommateSave.create({
+        data: { userId: currentUserId, savedUserId: targetUserId },
+      });
+      return { saved: true };
+    });
+  }
+
+  async getSavedRoommates(userId: string, query: PaginationDto) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+    const currentUser = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: {
+        vibes: { select: { id: true, name: true, emoji: true } },
+        interests: { select: { id: true, name: true, icon: true } },
+        communities: { select: { id: true, name: true, emoji: true } },
+        location: { select: { city: true, state: true, country: true } },
+        roommatePreferences: true,
+        userBadges: { select: { badgeType: true } },
+      },
+    });
+    if (!currentUser) {
+      throw new NotFoundException({
+        code: 'RESOURCE_NOT_FOUND',
+        message: 'User not found',
+      });
+    }
+    const [rows, total] = await this.prisma.$transaction([
+      this.prisma.roommateSave.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * limit,
+        take: limit,
+        include: {
+          savedUser: {
+            include: {
+              location: { select: { city: true, state: true, country: true } },
+              roommatePreferences: true,
+              vibes: { select: { id: true, name: true, emoji: true } },
+              interests: { select: { id: true, name: true, icon: true } },
+              communities: { select: { id: true, name: true, emoji: true } },
+              userBadges: { select: { badgeType: true } },
+            },
+          },
+        },
+      }),
+      this.prisma.roommateSave.count({ where: { userId } }),
+    ]);
+    const cu = currentUser as UserWithRelations;
+    const savedTargetIds = rows.map((row) => row.savedUser.id);
+    const connMap = await this.batchConnectionStatuses(userId, savedTargetIds);
+    const data = rows.map((row) => {
+      const u = row.savedUser as UserWithRelations;
+      const score = this.computeCompatibilityScore(cu, u);
+      const conn = connMap.get(u.id) ?? {
+        status: null as RoommateConnectionStatus,
+        conversationId: null,
+      };
+      return this.formatRoommateCard(
+        u,
+        cu,
+        score,
+        true,
+        conn.status,
+        conn.conversationId,
+      );
+    });
+    return { data, meta: createPaginationMeta(page, limit, total) };
   }
 }
 

@@ -36,11 +36,19 @@ export class HousingService {
     return loc?.city ?? null;
   }
 
-  private formatListing(listing: any, currentUserId?: string) {
+  private formatListing(
+    listing: any,
+    currentUserId?: string,
+    isSavedOverride?: boolean,
+  ) {
     const isInterested =
       currentUserId && (listing.interests?.length ?? 0) > 0;
     const interestCount =
       listing._count?.interests ?? listing.interests?.length ?? 0;
+    const isSaved =
+      isSavedOverride !== undefined
+        ? isSavedOverride
+        : !!(currentUserId && (listing.saves?.length ?? 0) > 0);
 
     return {
       id: listing.id,
@@ -97,6 +105,7 @@ export class HousingService {
       })),
       isInterested: !!isInterested,
       interestCount,
+      isSaved,
       isOwner: currentUserId ? listing.ownerId === currentUserId : false,
     };
   }
@@ -147,6 +156,10 @@ export class HousingService {
             where: { userId },
             select: { id: true },
           },
+          saves: {
+            where: { userId },
+            select: { id: true },
+          },
         },
       }),
       this.prisma.housingListing.count({ where }),
@@ -180,6 +193,10 @@ export class HousingService {
                 where: { userId },
                 select: { id: true },
               },
+              saves: {
+                where: { userId },
+                select: { id: true },
+              },
             },
           },
         },
@@ -205,6 +222,10 @@ export class HousingService {
         images: { orderBy: { order: 'asc' } },
         _count: { select: { interests: true } },
         interests: {
+          where: { userId },
+          select: { id: true },
+        },
+        saves: {
           where: { userId },
           select: { id: true },
         },
@@ -269,6 +290,10 @@ export class HousingService {
         images: { orderBy: { order: 'asc' } },
         _count: { select: { interests: true } },
         interests: {
+          where: { userId },
+          select: { id: true },
+        },
+        saves: {
           where: { userId },
           select: { id: true },
         },
@@ -353,6 +378,7 @@ export class HousingService {
       });
     }
     await this.prisma.$transaction(async (tx) => {
+      await tx.housingSave.deleteMany({ where: { listingId } });
       await tx.housingInterest.deleteMany({ where: { listingId } });
       await tx.housingImage.deleteMany({ where: { listingId } });
       await tx.housingListing.delete({ where: { id: listingId } });
@@ -536,6 +562,10 @@ export class HousingService {
             where: { userId },
             select: { id: true },
           },
+          saves: {
+            where: { userId },
+            select: { id: true },
+          },
         },
       }),
       this.prisma.housingListing.count({ where: { ownerId: userId } }),
@@ -543,6 +573,73 @@ export class HousingService {
     const data = items.map((listing) => {
       const withCount = { ...listing, interestCount: listing._count.interests };
       return this.formatListing(withCount, userId);
+    });
+    return { data, meta: createPaginationMeta(page, limit, total) };
+  }
+
+  async toggleSave(userId: string, listingId: string) {
+    const listing = await this.prisma.housingListing.findUnique({
+      where: { id: listingId },
+      select: { id: true },
+    });
+    if (!listing) {
+      throw new NotFoundException({
+        code: 'RESOURCE_NOT_FOUND',
+        message: 'Listing not found',
+      });
+    }
+    return this.prisma.$transaction(async (tx) => {
+      const existing = await tx.housingSave.findUnique({
+        where: {
+          userId_listingId: { userId, listingId },
+        },
+      });
+      if (existing) {
+        await tx.housingSave.delete({ where: { id: existing.id } });
+        return { saved: false };
+      }
+      await tx.housingSave.create({
+        data: { userId, listingId },
+      });
+      return { saved: true };
+    });
+  }
+
+  async getSavedListings(userId: string, query: PaginationDto) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+    const [rows, total] = await this.prisma.$transaction([
+      this.prisma.housingSave.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * limit,
+        take: limit,
+        include: {
+          listing: {
+            include: {
+              owner: {
+                include: { userBadges: { select: { badgeType: true } } },
+              },
+              images: { orderBy: { order: 'asc' } },
+              _count: { select: { interests: true } },
+              interests: {
+                where: { userId },
+                select: { id: true },
+              },
+              saves: {
+                where: { userId },
+                select: { id: true },
+              },
+            },
+          },
+        },
+      }),
+      this.prisma.housingSave.count({ where: { userId } }),
+    ]);
+    const data = rows.map((row) => {
+      const listing = row.listing;
+      const withCount = { ...listing, interestCount: listing._count.interests };
+      return this.formatListing(withCount, userId, true);
     });
     return { data, meta: createPaginationMeta(page, limit, total) };
   }

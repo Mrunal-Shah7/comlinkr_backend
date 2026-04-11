@@ -57,7 +57,8 @@ export class EventsController {
   }
 
   @Get('saved')
-  @ApiOperation({ summary: 'Saved / bookmarked events' })
+  @ApiOperation({ summary: "Get current user's saved events (paginated)" })
+  @ApiResponse({ status: 200, description: 'Paginated saved events' })
   @ApiQuery({ name: 'page', required: false })
   @ApiQuery({ name: 'limit', required: false })
   getSaved(

@@ -9,11 +9,13 @@ import {
 import {
   ApiTags,
   ApiOperation,
+  ApiQuery,
   ApiResponse,
   ApiBody,
 } from '@nestjs/swagger';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { CommunityService } from './community.service';
+import { PaginationDto } from '../../common/dto/pagination.dto';
 import { CommunityQueryDto } from './dto/community-query.dto';
 import { CommunityStatsQueryDto } from './dto/community-stats-query.dto';
 import { CreateQuestionDto } from './dto/create-question.dto';
@@ -55,6 +57,18 @@ export class CommunityController {
     @Query() query: CommunityQueryDto,
   ) {
     return this.communityService.getQuestions(userId, query);
+  }
+
+  @Get('questions/saved')
+  @ApiOperation({ summary: "Get user's saved community questions" })
+  @ApiQuery({ name: 'page', required: false })
+  @ApiQuery({ name: 'limit', required: false })
+  @ApiResponse({ status: 200, description: 'Paginated saved questions' })
+  async getSavedQuestions(
+    @CurrentUser('id') userId: string,
+    @Query() query: PaginationDto,
+  ) {
+    return this.communityService.getSavedQuestions(userId, query);
   }
 
   @Get('stats')

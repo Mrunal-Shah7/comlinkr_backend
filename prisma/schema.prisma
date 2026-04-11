@@ -281,6 +281,11 @@ model User {
   events                   Event[]
   eventAttendances         EventAttendee[]
   eventSaves               EventSave[]
+  housingSaves             HousingSave[]
+  restaurantSaves          RestaurantSave[]
+  roommateSaves            RoommateSave[]       @relation("RoommateSaver")
+  savedByUsers             RoommateSave[]       @relation("RoommateSavedProfile")
+  storySaves               StorySave[]
   contentReports           ContentReport[]       @relation("UserContentReports")
   stories                  Story[]
   challenges               Challenge[]
@@ -508,6 +513,7 @@ model HousingListing {
   owner   User            @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   images  HousingImage[]
   interests HousingInterest[]
+  saves   HousingSave[]
 }
 
 model HousingImage {
@@ -530,6 +536,20 @@ model HousingInterest {
   user    User           @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([listingId, userId])
+}
+
+model HousingSave {
+  id        String   @id @default(uuid())
+  userId    String
+  listingId String
+  createdAt DateTime @default(now())
+
+  user    User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  listing HousingListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, listingId])
+  @@index([userId])
+  @@index([listingId])
 }
 
 // ============== FOOD / RESTAURANT ==============
@@ -567,6 +587,7 @@ model Restaurant {
   reviews     RestaurantReview[]
   reservations RestaurantReservation[]
   favorites   RestaurantFavorite[]
+  saves       RestaurantSave[]
 }
 
 model RestaurantImage {
@@ -616,6 +637,20 @@ model RestaurantFavorite {
   user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([restaurantId, userId])
+}
+
+model RestaurantSave {
+  id           String   @id @default(uuid())
+  userId       String
+  restaurantId String
+  createdAt    DateTime @default(now())
+
+  user       User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  restaurant Restaurant @relation(fields: [restaurantId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, restaurantId])
+  @@index([userId])
+  @@index([restaurantId])
 }
 
 // ============== COMMUNITY Q&A ==============
@@ -738,6 +773,7 @@ model Conversation {
   createdBy User                 @relation(fields: [createdById], references: [id], onDelete: Cascade)
   members   ConversationMember[]
   messages  Message[]
+  event     Event?
 }
 
 model ConversationMember {
@@ -790,12 +826,14 @@ model Event {
   ticketPrice   Decimal?
   capacity      Int?
   attendeeCount Int           @default(0)
+  conversationId String?    @unique
   createdAt     DateTime      @default(now())
 
-  author       User         @relation(fields: [authorId], references: [id], onDelete: Cascade)
-  attendees    EventAttendee[]
-  saves        EventSave[]
-  eventImages  EventImage[]
+  author         User          @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  attendees      EventAttendee[]
+  saves          EventSave[]
+  eventImages    EventImage[]
 }
 
 model EventImage {
@@ -877,7 +915,34 @@ model Story {
   expiresAt       DateTime
   createdAt       DateTime       @default(now())
 
-  author User  @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  author User       @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  saves  StorySave[]
+}
+
+model RoommateSave {
+  id          String   @id @default(uuid())
+  userId      String
+  savedUserId String
+  createdAt   DateTime @default(now())
+
+  user      User @relation("RoommateSaver", fields: [userId], references: [id], onDelete: Cascade)
+  savedUser User @relation("RoommateSavedProfile", fields: [savedUserId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, savedUserId])
+  @@index([userId])
+}
+
+model StorySave {
+  id        String   @id @default(uuid())
+  userId    String
+  storyId   String
+  createdAt DateTime @default(now())
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  story Story @relation(fields: [storyId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, storyId])
+  @@index([userId])
 }
 
 model Challenge {

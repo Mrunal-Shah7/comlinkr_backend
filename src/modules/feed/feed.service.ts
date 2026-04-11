@@ -186,13 +186,19 @@ export class FeedService {
       };
     }
 
+    const cityTrimmed = city.trim();
     const where: any = {
       isPublished: true,
-      author: {
-        location: {
-          city,
+      OR: [
+        { authorId: userId },
+        {
+          author: {
+            location: {
+              city: { equals: cityTrimmed, mode: 'insensitive' },
+            },
+          },
         },
-      },
+      ],
     };
 
     if (query.category) {

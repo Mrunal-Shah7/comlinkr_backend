@@ -587,6 +587,9 @@ export class MessagingService {
   ): Promise<MessageResponse> {
     const member = await this.prisma.conversationMember.findUnique({
       where: { conversationId_userId: { conversationId, userId } },
+      include: {
+        conversation: { select: { type: true } },
+      },
     });
     if (!member) {
       throw new ForbiddenException('FORBIDDEN');
@@ -601,12 +604,19 @@ export class MessagingService {
     const otherMembers = await this.prisma.conversationMember.findMany({
       where: { conversationId, userId: { not: userId } },
     });
-    for (const other of otherMembers) {
-      const blocked = await this.prisma.blockedUser.findUnique({
-        where: { blockerId_blockedId: { blockerId: other.userId, blockedId: userId } },
-      });
-      if (blocked) {
-        throw new ForbiddenException('Cannot send messages to this user.');
+    if (member.conversation.type === 'DIRECT') {
+      for (const other of otherMembers) {
+        const blocked = await this.prisma.blockedUser.findUnique({
+          where: {
+            blockerId_blockedId: {
+              blockerId: other.userId,
+              blockedId: userId,
+            },
+          },
+        });
+        if (blocked) {
+          throw new ForbiddenException('Cannot send messages to this user.');
+        }
       }
     }
 

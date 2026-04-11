@@ -26,6 +26,7 @@ import { CreateRestaurantDto } from './dto/create-restaurant.dto';
 import { UpdateRestaurantDto } from './dto/update-restaurant.dto';
 import { RestaurantQueryDto } from './dto/restaurant-query.dto';
 import { CreateReviewDto } from './dto/create-review.dto';
+import { UpdateReviewDto } from './dto/update-review.dto';
 import { CreateReservationDto } from './dto/create-reservation.dto';
 import { ReportReasonDto } from './dto/report-reason.dto';
 
@@ -78,6 +79,18 @@ export class FoodController {
     return this.foodService.getFavorites(userId, query);
   }
 
+  @Get('saved')
+  @ApiOperation({ summary: "Get user's saved restaurants (bookmarks)" })
+  @ApiQuery({ name: 'page', required: false })
+  @ApiQuery({ name: 'limit', required: false })
+  @ApiResponse({ status: 200, description: 'Paginated saved restaurants' })
+  async getSavedRestaurants(
+    @CurrentUser('id') userId: string,
+    @Query() query: PaginationDto,
+  ) {
+    return this.foodService.getSavedRestaurants(userId, query);
+  }
+
   @Get(':id/reviews')
   @ApiOperation({ summary: 'Get paginated reviews for a restaurant' })
   @ApiQuery({ name: 'page', required: false })
@@ -89,6 +102,30 @@ export class FoodController {
     @Query() query: PaginationDto,
   ) {
     return this.foodService.getReviews(id, query);
+  }
+
+  @Patch(':id/reviews')
+  @ApiOperation({ summary: 'Edit own review' })
+  @ApiResponse({ status: 200, description: 'Review updated' })
+  @ApiResponse({ status: 404, description: 'Review not found' })
+  @ApiResponse({ status: 400, description: 'No fields provided' })
+  async updateMyReview(
+    @CurrentUser('id') userId: string,
+    @Param('id') restaurantId: string,
+    @Body() dto: UpdateReviewDto,
+  ) {
+    return this.foodService.updateReview(userId, restaurantId, dto);
+  }
+
+  @Delete(':id/reviews')
+  @ApiOperation({ summary: 'Delete own review' })
+  @ApiResponse({ status: 200, description: 'Review deleted' })
+  @ApiResponse({ status: 404, description: 'Review not found' })
+  async deleteMyReview(
+    @CurrentUser('id') userId: string,
+    @Param('id') restaurantId: string,
+  ) {
+    return this.foodService.deleteReview(userId, restaurantId);
   }
 
   @Get(':id')
@@ -210,6 +247,16 @@ export class FoodController {
     @Param('id') id: string,
   ) {
     return this.foodService.toggleFavorite(userId, id);
+  }
+
+  @Post(':id/save')
+  @ApiOperation({ summary: 'Toggle save/bookmark on a restaurant' })
+  @ApiResponse({ status: 200, description: 'Save state' })
+  async toggleRestaurantSave(
+    @CurrentUser('id') userId: string,
+    @Param('id') id: string,
+  ) {
+    return this.foodService.toggleRestaurantSave(userId, id);
   }
 
   @Post(':id/order')

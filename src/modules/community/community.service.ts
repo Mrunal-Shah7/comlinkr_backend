@@ -8,7 +8,10 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CreateQuestionDto } from './dto/create-question.dto';
 import { CreateAnswerDto } from './dto/create-answer.dto';
 import { CommunityQueryDto } from './dto/community-query.dto';
-import { createPaginationMeta } from '../../common/dto/pagination.dto';
+import {
+  PaginationDto,
+  createPaginationMeta,
+} from '../../common/dto/pagination.dto';
 
 @Injectable()
 export class CommunityService {
@@ -370,6 +373,43 @@ export class CommunityService {
     });
 
     return result;
+  }
+
+  async getSavedQuestions(userId: string, query: PaginationDto) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+    const [rows, total] = await this.prisma.$transaction([
+      this.prisma.communitySave.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * limit,
+        take: limit,
+        include: {
+          question: {
+            include: { author: true },
+          },
+        },
+      }),
+      this.prisma.communitySave.count({ where: { userId } }),
+    ]);
+    const ids = rows.map((r) => r.question.id);
+    const upvotes =
+      ids.length === 0
+        ? []
+        : await this.prisma.communityUpvote.findMany({
+            where: {
+              userId,
+              targetType: 'QUESTION',
+              targetId: { in: ids },
+            },
+            select: { targetId: true },
+          });
+    const upvotedIds = new Set(upvotes.map((u) => u.targetId));
+    const savedIds = new Set(ids);
+    const data = rows.map((r) =>
+      this.formatQuestion(r.question, userId, upvotedIds, savedIds),
+    );
+    return { data, meta: createPaginationMeta(page, limit, total) };
   }
 
   async toggleSaveQuestion(userId: string, questionId: string) {

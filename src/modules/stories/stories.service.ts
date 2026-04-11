@@ -1,8 +1,16 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { randomUUID } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { CreateStoryDto } from './dto/create-story.dto';
+import {
+  PaginationDto,
+  createPaginationMeta,
+} from '../../common/dto/pagination.dto';
 
 const STORY_MEDIA_MAX_SIZE = 50 * 1024 * 1024;
 const STORY_EXPIRY_HOURS = 24;
@@ -25,15 +33,8 @@ export class StoriesService {
     return mediaUrl;
   }
 
-  private async getUserCity(userId: string): Promise<string | null> {
-    const loc = await this.prisma.userLocation.findUnique({
-      where: { userId },
-      select: { city: true },
-    });
-    return loc?.city ?? null;
-  }
-
-  private formatStory(story: any) {
+  /** @param isSaved — from batch `StorySave` lookup (never infer from `story.saves` here). */
+  private formatStory(story: any, isSaved: boolean) {
     const now = new Date();
     const isExpired = story.expiresAt < now;
     return {
@@ -58,7 +59,20 @@ export class StoriesService {
           ? this.buildFileUrl(story.author.avatarUrl)
           : null,
       },
+      isSaved,
     };
+  }
+
+  private async fetchSavedStoryIdSet(
+    userId: string,
+    storyIds: string[],
+  ): Promise<Set<string>> {
+    if (storyIds.length === 0) return new Set();
+    const rows = await this.prisma.storySave.findMany({
+      where: { userId, storyId: { in: storyIds } },
+      select: { storyId: true },
+    });
+    return new Set(rows.map((r) => r.storyId));
   }
 
   async createStory(
@@ -118,7 +132,7 @@ export class StoriesService {
         },
       },
     });
-    return this.formatStory(created);
+    return this.formatStory(created, false);
   }
 
   async getActiveStories(userId: string) {
@@ -135,7 +149,7 @@ export class StoriesService {
           },
         }),
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy: [{ authorId: 'asc' }, { createdAt: 'asc' }],
       include: {
         author: {
           select: {
@@ -147,7 +161,50 @@ export class StoriesService {
         },
       },
     });
-    return stories.map((s) => this.formatStory(s));
+
+    const mine = stories.filter((s) => s.authorId === userId);
+    const other = stories.filter((s) => s.authorId !== userId);
+    const ordered = [...mine, ...other];
+
+    const savedSet = await this.fetchSavedStoryIdSet(
+      userId,
+      ordered.map((s) => s.id),
+    );
+    return ordered.map((s) => this.formatStory(s, savedSet.has(s.id)));
+  }
+
+  async getMyStories(userId: string) {
+    const now = new Date();
+    const stories = await this.prisma.story.findMany({
+      where: {
+        authorId: userId,
+        expiresAt: { gt: now },
+      },
+      orderBy: { createdAt: 'asc' },
+      include: {
+        author: {
+          select: {
+            id: true,
+            username: true,
+            fullName: true,
+            avatarUrl: true,
+          },
+        },
+      },
+    });
+    const savedSet = await this.fetchSavedStoryIdSet(
+      userId,
+      stories.map((s) => s.id),
+    );
+    return stories.map((s) => this.formatStory(s, savedSet.has(s.id)));
+  }
+
+  private async getUserCity(userId: string): Promise<string | null> {
+    const loc = await this.prisma.userLocation.findUnique({
+      where: { userId },
+      select: { city: true },
+    });
+    return loc?.city ?? null;
   }
 
   async viewStory(userId: string, storyId: string) {
@@ -182,8 +239,74 @@ export class StoriesService {
         data: { viewsCount: { increment: 1 } },
       })
       .catch(() => {});
-    return this.formatStory(story);
+
+    const save = await this.prisma.storySave.findUnique({
+      where: {
+        userId_storyId: { userId, storyId },
+      },
+      select: { id: true },
+    });
+    return this.formatStory(story, !!save);
+  }
+
+  async toggleStorySave(userId: string, storyId: string) {
+    const story = await this.prisma.story.findUnique({
+      where: { id: storyId },
+      select: { id: true },
+    });
+    if (!story) {
+      throw new NotFoundException({
+        code: 'RESOURCE_NOT_FOUND',
+        message: 'Story not found',
+      });
+    }
+    return this.prisma.$transaction(async (tx) => {
+      const existing = await tx.storySave.findUnique({
+        where: {
+          userId_storyId: { userId, storyId },
+        },
+      });
+      if (existing) {
+        await tx.storySave.delete({ where: { id: existing.id } });
+        return { saved: false, isSaved: false };
+      }
+      await tx.storySave.create({
+        data: { userId, storyId },
+      });
+      return { saved: true, isSaved: true };
+    });
+  }
+
+  async getSavedStories(userId: string, query: PaginationDto) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+    const [rows, total] = await this.prisma.$transaction([
+      this.prisma.storySave.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+        skip: (page - 1) * limit,
+        take: limit,
+        include: {
+          story: {
+            include: {
+              author: {
+                select: {
+                  id: true,
+                  username: true,
+                  fullName: true,
+                  avatarUrl: true,
+                },
+              },
+            },
+          },
+        },
+      }),
+      this.prisma.storySave.count({ where: { userId } }),
+    ]);
+    const data = rows.map((row) => ({
+      ...this.formatStory(row.story, true),
+      savedAt: row.createdAt.toISOString(),
+    }));
+    return { data, meta: createPaginationMeta(page, limit, total) };
   }
 }
-
-

@@ -74,6 +74,18 @@ export class HousingController {
     return this.housingService.getInterestedListings(userId, query);
   }
 
+  @Get('saved')
+  @ApiOperation({ summary: "Get user's saved listings" })
+  @ApiQuery({ name: 'page', required: false })
+  @ApiQuery({ name: 'limit', required: false })
+  @ApiResponse({ status: 200, description: 'Paginated saved listings' })
+  async getSavedListings(
+    @CurrentUser('id') userId: string,
+    @Query() query: PaginationDto,
+  ) {
+    return this.housingService.getSavedListings(userId, query);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get listing by ID' })
   @ApiResponse({ status: 200, description: 'Listing detail' })
@@ -140,6 +152,16 @@ export class HousingController {
     @Param('id') id: string,
   ) {
     return this.housingService.removeInterest(userId, id);
+  }
+
+  @Post(':id/save')
+  @ApiOperation({ summary: 'Toggle save/bookmark on a listing' })
+  @ApiResponse({ status: 200, description: 'Save state' })
+  async toggleSave(
+    @CurrentUser('id') userId: string,
+    @Param('id') id: string,
+  ) {
+    return this.housingService.toggleSave(userId, id);
   }
 
   @Post(':id/images')

@@ -25,6 +25,7 @@ import { NotificationsModule } from './modules/notifications/notifications.modul
 import { SettingsModule } from './modules/settings/settings.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { NewsModule } from './modules/news/news.module';
+import { SavesModule } from './modules/saves/saves.module';
 import { AuthGuard } from './common/guards/auth.guard';
 import { OnboardingGuard } from './common/guards/onboarding.guard';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
@@ -57,6 +58,7 @@ import { RequestLoggerMiddleware } from './common/middleware/request-logger.midd
     SettingsModule,
     AdminModule,
     NewsModule,
+    SavesModule,
   ],
   controllers: [AppController],
   providers: [

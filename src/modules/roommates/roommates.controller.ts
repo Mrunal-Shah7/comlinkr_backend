@@ -15,6 +15,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { PaginationDto } from '../../common/dto/pagination.dto';
 import { RoommatesService } from './roommates.service';
 import { UpdatePreferencesDto } from './dto/update-preferences.dto';
 import { RoommatesQueryDto } from './dto/roommates-query.dto';
@@ -94,6 +95,18 @@ export class RoommatesController {
     return this.roommatesService.searchRoommates(userId, query);
   }
 
+  @Get('saved')
+  @ApiOperation({ summary: "Get user's saved roommate profiles" })
+  @ApiQuery({ name: 'page', required: false })
+  @ApiQuery({ name: 'limit', required: false })
+  @ApiResponse({ status: 200, description: 'Paginated saved roommate cards' })
+  async getSavedRoommates(
+    @CurrentUser('id') userId: string,
+    @Query() query: PaginationDto,
+  ) {
+    return this.roommatesService.getSavedRoommates(userId, query);
+  }
+
   @Patch('preferences')
   @ApiOperation({ summary: 'Update own roommate preferences' })
   @ApiResponse({ status: 200, description: 'Preferences updated' })
@@ -115,6 +128,16 @@ export class RoommatesController {
     return this.roommatesService.getRoommateProfile(userId, id);
   }
 
+  @Post(':id/save')
+  @ApiOperation({ summary: 'Toggle save/bookmark on a roommate profile' })
+  @ApiResponse({ status: 200, description: 'Save state' })
+  async toggleRoommateSave(
+    @CurrentUser('id') userId: string,
+    @Param('id') id: string,
+  ) {
+    return this.roommatesService.toggleRoommateSave(userId, id);
+  }
+
   @Post(':id/connect')
   @ApiOperation({ summary: 'Send connection request / start conversation' })
   @ApiResponse({ status: 201, description: 'Connection request sent or existing conversation' })
@@ -124,5 +147,26 @@ export class RoommatesController {
     @Param('id') id: string,
   ) {
     return this.roommatesService.sendConnectionRequest(userId, id);
+  }
+
+  @Post(':id/accept')
+  @ApiOperation({ summary: 'Accept incoming roommate connection request from user :id' })
+  @ApiResponse({ status: 200, description: 'Connection accepted' })
+  @ApiResponse({ status: 400, description: 'No pending request' })
+  async acceptConnection(
+    @CurrentUser('id') userId: string,
+    @Param('id') requesterId: string,
+  ) {
+    return this.roommatesService.acceptConnectionRequest(userId, requesterId);
+  }
+
+  @Post(':id/decline')
+  @ApiOperation({ summary: 'Decline incoming roommate connection request from user :id' })
+  @ApiResponse({ status: 200, description: 'Request declined' })
+  async declineConnection(
+    @CurrentUser('id') userId: string,
+    @Param('id') requesterId: string,
+  ) {
+    return this.roommatesService.declineConnectionRequest(userId, requesterId);
   }
 }

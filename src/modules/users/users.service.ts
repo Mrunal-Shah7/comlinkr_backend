@@ -25,11 +25,35 @@ export class UsersService {
   }
 
   private async computeStats(userId: string): Promise<UserStatsDto> {
-    const [postsCount, savedCount, eventsCount] = await Promise.all([
+    const [
+      postsCount,
+      feedSaves,
+      eventSaves,
+      housingSaves,
+      restaurantSaves,
+      roommateSaves,
+      storySaves,
+      communitySaves,
+      eventsCount,
+    ] = await Promise.all([
       this.prisma.feedPost.count({ where: { authorId: userId } }),
       this.prisma.feedSave.count({ where: { userId } }),
+      this.prisma.eventSave.count({ where: { userId } }),
+      this.prisma.housingSave.count({ where: { userId } }),
+      this.prisma.restaurantSave.count({ where: { userId } }),
+      this.prisma.roommateSave.count({ where: { userId } }),
+      this.prisma.storySave.count({ where: { userId } }),
+      this.prisma.communitySave.count({ where: { userId } }),
       this.prisma.eventAttendee.count({ where: { userId } }),
     ]);
+    const savedCount =
+      feedSaves +
+      eventSaves +
+      housingSaves +
+      restaurantSaves +
+      roommateSaves +
+      storySaves +
+      communitySaves;
 
     let neighborsCount = 0;
     const location = await this.prisma.userLocation.findUnique({

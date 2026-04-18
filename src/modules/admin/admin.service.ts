@@ -266,7 +266,7 @@ export class AdminService {
       referenceType: 'BADGE_APPLICATION',
       referenceId: application.id,
     });
-    return { message: dto.status === 'APPROVED' ? 'Application approved' : 'Application rejected' };
+    return { message: dto.status === 'APPROVED' ? 'Application approved.' : 'Application rejected.' };
   }
 
   async getAnalytics() {

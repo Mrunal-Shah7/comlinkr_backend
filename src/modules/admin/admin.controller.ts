@@ -7,7 +7,7 @@ import {
   Patch,
   Query,
 } from '@nestjs/common';
-import { ApiResponse, ApiTags } from '@nestjs/swagger';
+import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { UseGuards } from '@nestjs/common';
@@ -18,6 +18,8 @@ import { UpdateUserAdminDto } from './dto/update-user-admin.dto';
 import { AdminContentQueryDto } from './dto/admin-content-query.dto';
 import { ModerateContentDto } from './dto/moderate-content.dto';
 import { ReviewBadgeApplicationDto } from './dto/review-badge-application.dto';
+import { ApproveBadgeApplicationDto } from './dto/approve-badge-application.dto';
+import { RejectBadgeApplicationDto } from './dto/reject-badge-application.dto';
 import { UpdatePlatformSettingsDto } from './dto/update-platform-settings.dto';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 
@@ -64,6 +66,47 @@ export class AdminController {
     return this.adminService.getBadgeApplications(query);
   }
 
+  @Patch('badges/applications/:id/approve')
+  @ApiOperation({ summary: 'Approve badge application' })
+  @ApiResponse({ status: 200, description: 'Application approved.' })
+  @ApiResponse({ status: 404, description: 'Application not found' })
+  @ApiResponse({ status: 400, description: 'Already reviewed' })
+  approveBadgeApplication(
+    @CurrentUser('id') adminUserId: string,
+    @Param('id') applicationId: string,
+    @Body() dto: ApproveBadgeApplicationDto,
+  ) {
+    return this.adminService.reviewBadgeApplication(adminUserId, applicationId, {
+      status: 'APPROVED',
+      adminNotes: dto.adminNotes,
+    });
+  }
+
+  @Patch('badges/applications/:id/reject')
+  @ApiOperation({ summary: 'Reject badge application' })
+  @ApiResponse({ status: 200, description: 'Application rejected.' })
+  @ApiResponse({ status: 404, description: 'Application not found' })
+  @ApiResponse({ status: 400, description: 'Already reviewed' })
+  rejectBadgeApplication(
+    @CurrentUser('id') adminUserId: string,
+    @Param('id') applicationId: string,
+    @Body() dto: RejectBadgeApplicationDto,
+  ) {
+    return this.adminService.reviewBadgeApplication(adminUserId, applicationId, {
+      status: 'REJECTED',
+      adminNotes: dto.adminNotes,
+    });
+  }
+
+  @Patch('badges/applications/:id')
+  reviewBadgeApplication(
+    @CurrentUser('id') adminUserId: string,
+    @Param('id') applicationId: string,
+    @Body() dto: ReviewBadgeApplicationDto,
+  ) {
+    return this.adminService.reviewBadgeApplication(adminUserId, applicationId, dto);
+  }
+
   @Get('users/:id')
   getUserById(@Param('id') id: string) {
     return this.adminService.getUserById(id);
@@ -84,12 +127,4 @@ export class AdminController {
     return this.adminService.moderateContent(id, dto);
   }
 
-  @Patch('badges/applications/:id')
-  reviewBadgeApplication(
-    @CurrentUser('id') adminUserId: string,
-    @Param('id') applicationId: string,
-    @Body() dto: ReviewBadgeApplicationDto,
-  ) {
-    return this.adminService.reviewBadgeApplication(adminUserId, applicationId, dto);
-  }
 }

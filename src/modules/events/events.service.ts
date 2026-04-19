@@ -16,6 +16,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { CreateEventDto } from './dto/create-event.dto';
 import { EventsQueryDto } from './dto/events-query.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
+import { AttendEventDto } from './dto/attend-event.dto';
 import { TicketType } from '@prisma/client';
 
 const EVENT_IMAGE_MAX = 6;
@@ -366,7 +367,8 @@ export class EventsService {
     );
   }
 
-  async attendEvent(userId: string, eventId: string) {
+  async attendEvent(userId: string, eventId: string, dto: AttendEventDto = {}) {
+    const tickets = dto.ticketCount != null && dto.ticketCount > 0 ? dto.ticketCount : 1;
     const event = await this.prisma.event.findUnique({
       where: { id: eventId },
       include: {
@@ -394,10 +396,11 @@ export class EventsService {
       };
     }
     const capacity = event.capacity;
-    if (capacity != null && event.attendeeCount >= capacity) {
+    if (capacity != null && event.attendeeCount + tickets > capacity) {
+      const left = Math.max(0, capacity - event.attendeeCount);
       throw new BadRequestException({
         code: 'BAD_REQUEST',
-        message: 'This event is full.',
+        message: `Not enough spots remaining. Only ${left} spot${left === 1 ? '' : 's'} left.`,
       });
     }
 
@@ -442,24 +445,29 @@ export class EventsService {
           };
         }
 
-        if (
-          fresh.capacity != null &&
-          fresh.attendeeCount >= fresh.capacity
-        ) {
+        if (fresh.capacity != null && fresh.attendeeCount + tickets > fresh.capacity) {
+          const left = Math.max(0, fresh.capacity - fresh.attendeeCount);
           throw new BadRequestException({
             code: 'BAD_REQUEST',
-            message: 'This event is full.',
+            message: `Not enough spots remaining. Only ${left} spot${left === 1 ? '' : 's'} left.`,
           });
         }
 
         const preCount = fresh.attendeeCount;
 
         await tx.eventAttendee.create({
-          data: { eventId, userId },
+          data: {
+            eventId,
+            userId,
+            attendeeName: dto.attendeeName?.trim() || null,
+            attendeeEmail: dto.attendeeEmail?.trim() || null,
+            attendeePhone: dto.attendeePhone?.trim() || null,
+            ticketCount: tickets,
+          },
         });
         await tx.event.update({
           where: { id: eventId },
-          data: { attendeeCount: { increment: 1 } },
+          data: { attendeeCount: { increment: tickets } },
         });
 
         const post = await tx.event.findUnique({
@@ -590,6 +598,7 @@ export class EventsService {
       where: {
         eventId_userId: { eventId, userId },
       },
+      select: { id: true, ticketCount: true },
     });
     if (!attendee) {
       return {
@@ -604,6 +613,8 @@ export class EventsService {
       select: { username: true },
     });
     const leaverName = leaver?.username ?? 'Someone';
+
+    const ticketCount = Math.max(1, attendee.ticketCount ?? 1);
 
     const newCount = await this.prisma.$transaction(async (tx) => {
       const ev = await tx.event.findUnique({
@@ -644,7 +655,7 @@ export class EventsService {
       await tx.eventAttendee.delete({
         where: { id: attendee.id },
       });
-      const next = Math.max(0, ev.attendeeCount - 1);
+      const next = Math.max(0, ev.attendeeCount - ticketCount);
       await tx.event.update({
         where: { id: eventId },
         data: { attendeeCount: next },
@@ -665,8 +676,8 @@ export class EventsService {
   }
 
   /** Mobile: same as attend; response uses { registered, attendees }. */
-  async registerForEvent(userId: string, eventId: string) {
-    const r = await this.attendEvent(userId, eventId);
+  async registerForEvent(userId: string, eventId: string, dto: AttendEventDto = {}) {
+    const r = await this.attendEvent(userId, eventId, dto);
     return {
       registered: r.attending,
       attendees: r.attendeeCount,
@@ -953,6 +964,7 @@ export class EventsService {
                 id: true,
                 username: true,
                 fullName: true,
+                email: true,
                 avatarUrl: true,
               },
             },
@@ -981,6 +993,10 @@ export class EventsService {
           ? await this.buildFileUrl(a.user.avatarUrl)
           : undefined,
         registeredAt: a.joinedAt.toISOString(),
+        attendeeName: a.attendeeName ?? a.user.fullName,
+        attendeeEmail: a.attendeeEmail ?? a.user.email,
+        attendeePhone: a.attendeePhone ?? null,
+        ticketCount: a.ticketCount,
       })),
     );
   }
@@ -989,7 +1005,7 @@ export class EventsService {
     const event = await this.prisma.event.findUnique({
       where: { id: eventId },
       include: {
-        attendees: { where: { userId }, select: { id: true, joinedAt: true } },
+        attendees: { where: { userId }, select: { id: true, joinedAt: true, ticketCount: true } },
         author: { select: { fullName: true } },
       },
     });
@@ -1013,7 +1029,7 @@ export class EventsService {
       location: event.venue,
       attendeeName: user?.fullName ?? 'Guest',
       attendeeEmail: user?.email ?? '',
-      quantity: 1,
+      quantity: Math.max(1, event.attendees[0].ticketCount ?? 1),
       totalPrice: Number(event.ticketPrice ?? 0),
       qrCode: '',
       issuedAt: event.attendees[0].joinedAt.toISOString(),

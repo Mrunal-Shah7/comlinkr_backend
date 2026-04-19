@@ -26,6 +26,7 @@ import { SettingsModule } from './modules/settings/settings.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { NewsModule } from './modules/news/news.module';
 import { SavesModule } from './modules/saves/saves.module';
+import { SharedSpacesModule } from './modules/shared-spaces/shared-spaces.module';
 import { AuthGuard } from './common/guards/auth.guard';
 import { OnboardingGuard } from './common/guards/onboarding.guard';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
@@ -59,6 +60,7 @@ import { RequestLoggerMiddleware } from './common/middleware/request-logger.midd
     AdminModule,
     NewsModule,
     SavesModule,
+    SharedSpacesModule,
   ],
   controllers: [AppController],
   providers: [

@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { createMailTransporter } from '../../config/mail.config';
+import { createMailTransporter, resolveSmtpSettings } from '../../config/mail.config';
 
 @Injectable()
 export class MailService {
@@ -11,9 +11,9 @@ export class MailService {
     code: string,
     type: 'REGISTRATION' | 'PASSWORD_RESET',
   ): Promise<void> {
-    const smtpUser = this.configService.get<string>('SES_SMTP_USER', '');
-    const smtpPass = this.configService.get<string>('SES_SMTP_PASSWORD', '');
-    const fromEmail = this.configService.get<string>('SES_FROM_EMAIL', '').trim();
+    const { user: smtpUser, pass: smtpPass, fromEmail } = resolveSmtpSettings(
+      this.configService,
+    );
     const isDev = this.configService.get<string>('NODE_ENV') === 'development';
     const credentialsMissing =
       !smtpUser ||

@@ -645,11 +645,22 @@ export class CommunityService {
     });
 
     if (existing && existing.optionId === optionId) {
-      const countsMap = await this.buildPollVoteCountsMap([poll]);
+      await this.prisma.$transaction(async (tx) => {
+        await tx.communityPollVote.delete({ where: { id: existing.id } });
+        const decA = optionId === poll.optionAId;
+        await tx.communityPoll.update({
+          where: { id: pollId },
+          data: decA ? { votesA: { decrement: 1 } } : { votesB: { decrement: 1 } },
+        });
+      });
+      const updated = await this.prisma.communityPoll.findUniqueOrThrow({
+        where: { id: pollId },
+      });
+      const countsMap = await this.buildPollVoteCountsMap([updated]);
       return this.formatPollRow(
-        poll,
-        existing.optionId,
-        countsMap.get(poll.id) ?? { votesA: 0, votesB: 0 },
+        updated,
+        null,
+        countsMap.get(updated.id) ?? { votesA: 0, votesB: 0 },
       );
     }
 

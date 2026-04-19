@@ -38,7 +38,7 @@ export class CommunityController {
   }
 
   @Post('polls/:id/vote')
-  @ApiOperation({ summary: 'Vote or change vote on a poll' })
+  @ApiOperation({ summary: 'Vote, change vote, or clear vote (same option again removes your vote)' })
   @ApiBody({ type: VotePollDto })
   @ApiResponse({ status: 200, description: 'Updated poll' })
   async votePoll(

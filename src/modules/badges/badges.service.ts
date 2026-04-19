@@ -208,6 +208,24 @@ export class BadgesService {
       }
     }
 
+    // Upload outside the DB transaction: storage I/O easily exceeds Prisma's default
+    // interactive transaction timeout (5s) and must not hold a transaction open.
+    const uploadedDocs: { documentKey: string; documentType: string }[] = [];
+    for (let i = 0; i < files.length; i++) {
+      const extension = StorageService.extensionFromMime(files[i].mimetype);
+      const documentKey = await this.storageService.uploadPrivateFile(
+        files[i].buffer,
+        files[i].mimetype,
+        `verification-docs/${userId}`,
+        randomUUID(),
+        extension,
+      );
+      uploadedDocs.push({
+        documentKey,
+        documentType: getDocumentTypeForIndex(dto.badgeType, i),
+      });
+    }
+
     const application = await this.prisma.$transaction(async (tx) => {
       const app = await tx.badgeApplication.create({
         data: {
@@ -230,23 +248,13 @@ export class BadgesService {
           reviewerBio: dto.reviewerBio ?? null,
         },
       });
-      for (let i = 0; i < files.length; i++) {
-        const extension = StorageService.extensionFromMime(files[i].mimetype);
-        const documentKey = await this.storageService.uploadPrivateFile(
-          files[i].buffer,
-          files[i].mimetype,
-          `verification-docs/${userId}`,
-          randomUUID(),
-          extension,
-        );
-        await tx.badgeDocument.create({
-          data: {
-            applicationId: app.id,
-            documentKey,
-            documentType: getDocumentTypeForIndex(dto.badgeType, i),
-          },
-        });
-      }
+      await tx.badgeDocument.createMany({
+        data: uploadedDocs.map((d) => ({
+          applicationId: app.id,
+          documentKey: d.documentKey,
+          documentType: d.documentType,
+        })),
+      });
       return tx.badgeApplication.findUnique({
         where: { id: app.id },
         include: { documents: true },

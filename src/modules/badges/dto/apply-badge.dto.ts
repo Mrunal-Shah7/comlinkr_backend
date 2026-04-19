@@ -1,4 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Transform } from 'class-transformer';
 import {
   IsEmail,
   IsEnum,
@@ -76,6 +77,12 @@ export class ApplyBadgeDto {
 
   @ApiPropertyOptional()
   @IsOptional()
+  /** multipart/form-data sends scalars as strings; empty must stay undefined for @IsOptional. */
+  @Transform(({ value }) => {
+    if (value === undefined || value === null || value === '') return undefined;
+    const n = Number(value);
+    return Number.isFinite(n) ? n : NaN;
+  })
   @IsInt()
   @Min(0)
   propertiesManaged?: number;

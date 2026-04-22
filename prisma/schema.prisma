@@ -300,6 +300,8 @@ model User {
   userBadges               UserBadge[]
   reviewedBadgeApplications BadgeApplication[]    @relation("Reviewer")
   notifications           Notification[]
+  newsArticleLikes        NewsArticleLike[]
+  newsArticleComments     NewsArticleComment[]
   pushDevices             PushDevice[]
   notificationPreference  NotificationPreference?
   privacySettings         PrivacySettings?
@@ -1137,6 +1139,34 @@ model Notification {
 
   @@index([userId])
   @@index([isRead])
+  @@index([userId, createdAt(sort: Desc)])
+}
+
+model NewsArticleLike {
+  id        String   @id @default(uuid())
+  userId    String
+  articleId String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, articleId])
+  @@index([articleId])
+  @@index([userId])
+}
+
+model NewsArticleComment {
+  id        String   @id @default(uuid())
+  userId    String
+  articleId String
+  content   String   @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([articleId, createdAt(sort: Desc)])
+  @@index([userId])
 }
 
 model NotificationPreference {

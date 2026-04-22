@@ -14,12 +14,16 @@ export interface NewsExplorePayload {
   data: RssNewsArticle[];
   cachedAt: string;
   total: number;
+  phase: 'primary' | 'full';
 }
 
 @Injectable()
 export class NewsService {
   private readonly cache = new Map<string, { ts: number; payload: NewsExplorePayload }>();
   private readonly ttlMs = 5 * 60 * 1000;
+  private readonly primaryTtlMs = 3 * 60 * 1000;
+  private readonly activeLocations: string[] = [];
+  private readonly activeLocationsSet = new Set<string>();
   constructor(
     private readonly prisma: PrismaService,
     private readonly storageService: StorageService,
@@ -28,13 +32,14 @@ export class NewsService {
   async getExploreFeed(city: string, country: string): Promise<NewsExplorePayload> {
     const c = (city || 'Los Angeles').trim();
     const co = (country || 'United States').trim();
+    this.trackActiveLocation(c, co);
     const cacheKey = `${c.toLowerCase()}|${co.toLowerCase()}`;
     const hit = this.cache.get(cacheKey);
     if (hit && Date.now() - hit.ts < this.ttlMs) {
       return hit.payload;
     }
 
-    const geo = COUNTRY_NEWS_MAP[co] || { gl: 'US', hl: 'en-US', flag: '🇺🇸' };
+    const geo = this.resolveGeoCountry(co);
 
     const [data, cityNews, countryNews] = await Promise.all([
       fetchAllNewsBuckets(c, co, geo.gl, geo.hl),
@@ -64,9 +69,49 @@ export class NewsService {
       data: unique,
       cachedAt,
       total: unique.length,
+      phase: 'full',
     };
     this.cache.set(cacheKey, { ts: Date.now(), payload });
     return payload;
+  }
+
+  async getExploreFeedPrimary(city: string, country: string): Promise<NewsExplorePayload> {
+    const c = (city || 'Los Angeles').trim();
+    const co = (country || 'United States').trim();
+    this.trackActiveLocation(c, co);
+    const geo = this.resolveGeoCountry(co);
+    const cacheKey = `primary:${c.toLowerCase()}|${co.toLowerCase()}`;
+    const hit = this.cache.get(cacheKey);
+    if (hit && Date.now() - hit.ts < this.primaryTtlMs) {
+      return hit.payload;
+    }
+
+    const [cityNews, countryNews] = await Promise.all([
+      fetchGoogleNewsRSS(`${c} local news today`, geo.gl, geo.hl, 'mycity'),
+      fetchGoogleNewsRSS(`${co} latest news headlines`, geo.gl, geo.hl, 'mycountry'),
+    ]);
+
+    const all = [...cityNews, ...countryNews];
+    const seen = new Set<string>();
+    const unique = all.filter((a) => {
+      const key = a.title.toLowerCase().slice(0, 40);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    const payload: NewsExplorePayload = {
+      data: unique,
+      cachedAt: new Date().toISOString(),
+      total: unique.length,
+      phase: 'primary',
+    };
+    this.cache.set(cacheKey, { ts: Date.now(), payload });
+    return payload;
+  }
+
+  getActiveLocations(): string[] {
+    return [...this.activeLocations];
   }
 
   async getArticleStats(userId: string, articleId: string) {
@@ -162,6 +207,27 @@ export class NewsService {
 
   private async getArticleLikeCount(articleId: string): Promise<number> {
     return this.prisma.newsArticleLike.count({ where: { articleId } });
+  }
+
+  private trackActiveLocation(city: string, country: string) {
+    if (!city || !country) return;
+    const key = `${city.toLowerCase()}|${country.toLowerCase()}`;
+    if (this.activeLocationsSet.has(key)) return;
+    if (this.activeLocations.length >= 50) {
+      const removed = this.activeLocations.shift();
+      if (removed) this.activeLocationsSet.delete(removed);
+    }
+    this.activeLocations.push(key);
+    this.activeLocationsSet.add(key);
+  }
+
+  private resolveGeoCountry(country: string) {
+    if (COUNTRY_NEWS_MAP[country]) return COUNTRY_NEWS_MAP[country];
+    const matchedKey = Object.keys(COUNTRY_NEWS_MAP).find(
+      (key) => key.toLowerCase() === country.toLowerCase(),
+    );
+    if (matchedKey) return COUNTRY_NEWS_MAP[matchedKey];
+    return { gl: 'US', hl: 'en-US', flag: '🇺🇸' };
   }
 
   private formatComment(comment: {

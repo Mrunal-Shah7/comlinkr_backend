@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
-import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { ApiOperation, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { NewsService } from './news.service';
 import { NewsExploreQueryDto } from './dto/news-explore-query.dto';
 import { AuthGuard } from '../../common/guards/auth.guard';
@@ -17,12 +17,13 @@ export class NewsController {
     summary:
       'Aggregated live news for Explore (Google News RSS via server — same mix as mobile)',
   })
+  @ApiQuery({ name: 'phase', required: false, enum: ['primary', 'full'] })
   @ApiResponse({ status: 200, description: 'Deduped articles + cache timestamp' })
   async explore(@Query() query: NewsExploreQueryDto) {
-    return this.newsService.getExploreFeed(
-      query.city ?? '',
-      query.country ?? '',
-    );
+    if (query.phase === 'primary') {
+      return this.newsService.getExploreFeedPrimary(query.city ?? '', query.country ?? '');
+    }
+    return this.newsService.getExploreFeed(query.city ?? '', query.country ?? '');
   }
 
   @Get('articles/:id/stats')

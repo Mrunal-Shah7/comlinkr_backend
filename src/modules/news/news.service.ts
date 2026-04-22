@@ -15,11 +15,17 @@ export interface NewsExplorePayload {
   cachedAt: string;
   total: number;
   phase: 'primary' | 'full';
+  page: number;
+  pageSize: number;
+  hasMore: boolean;
 }
 
 @Injectable()
 export class NewsService {
-  private readonly cache = new Map<string, { ts: number; payload: NewsExplorePayload }>();
+  private readonly cache = new Map<
+    string,
+    { ts: number; phase: 'primary' | 'full'; cachedAt: string; data: RssNewsArticle[] }
+  >();
   private readonly ttlMs = 5 * 60 * 1000;
   private readonly primaryTtlMs = 3 * 60 * 1000;
   private readonly activeLocations: string[] = [];
@@ -29,14 +35,19 @@ export class NewsService {
     private readonly storageService: StorageService,
   ) {}
 
-  async getExploreFeed(city: string, country: string): Promise<NewsExplorePayload> {
+  async getExploreFeed(
+    city: string,
+    country: string,
+    page = 1,
+    pageSize = 20,
+  ): Promise<NewsExplorePayload> {
     const c = (city || 'Los Angeles').trim();
     const co = (country || 'United States').trim();
     this.trackActiveLocation(c, co);
     const cacheKey = `${c.toLowerCase()}|${co.toLowerCase()}`;
     const hit = this.cache.get(cacheKey);
     if (hit && Date.now() - hit.ts < this.ttlMs) {
-      return hit.payload;
+      return this.toPagedPayload(hit.data, hit.cachedAt, 'full', page, pageSize);
     }
 
     const geo = this.resolveGeoCountry(co);
@@ -65,17 +76,16 @@ export class NewsService {
     });
 
     const cachedAt = new Date().toISOString();
-    const payload: NewsExplorePayload = {
-      data: unique,
-      cachedAt,
-      total: unique.length,
-      phase: 'full',
-    };
-    this.cache.set(cacheKey, { ts: Date.now(), payload });
-    return payload;
+    this.cache.set(cacheKey, { ts: Date.now(), phase: 'full', cachedAt, data: unique });
+    return this.toPagedPayload(unique, cachedAt, 'full', page, pageSize);
   }
 
-  async getExploreFeedPrimary(city: string, country: string): Promise<NewsExplorePayload> {
+  async getExploreFeedPrimary(
+    city: string,
+    country: string,
+    page = 1,
+    pageSize = 20,
+  ): Promise<NewsExplorePayload> {
     const c = (city || 'Los Angeles').trim();
     const co = (country || 'United States').trim();
     this.trackActiveLocation(c, co);
@@ -83,7 +93,7 @@ export class NewsService {
     const cacheKey = `primary:${c.toLowerCase()}|${co.toLowerCase()}`;
     const hit = this.cache.get(cacheKey);
     if (hit && Date.now() - hit.ts < this.primaryTtlMs) {
-      return hit.payload;
+      return this.toPagedPayload(hit.data, hit.cachedAt, 'primary', page, pageSize);
     }
 
     const [cityNews, countryNews] = await Promise.all([
@@ -100,14 +110,9 @@ export class NewsService {
       return true;
     });
 
-    const payload: NewsExplorePayload = {
-      data: unique,
-      cachedAt: new Date().toISOString(),
-      total: unique.length,
-      phase: 'primary',
-    };
-    this.cache.set(cacheKey, { ts: Date.now(), payload });
-    return payload;
+    const cachedAt = new Date().toISOString();
+    this.cache.set(cacheKey, { ts: Date.now(), phase: 'primary', cachedAt, data: unique });
+    return this.toPagedPayload(unique, cachedAt, 'primary', page, pageSize);
   }
 
   getActiveLocations(): string[] {
@@ -228,6 +233,28 @@ export class NewsService {
     );
     if (matchedKey) return COUNTRY_NEWS_MAP[matchedKey];
     return { gl: 'US', hl: 'en-US', flag: '🇺🇸' };
+  }
+
+  private toPagedPayload(
+    data: RssNewsArticle[],
+    cachedAt: string,
+    phase: 'primary' | 'full',
+    page: number,
+    pageSize: number,
+  ): NewsExplorePayload {
+    const safePage = Number.isFinite(page) && page > 0 ? Math.floor(page) : 1;
+    const safePageSize = Number.isFinite(pageSize) && pageSize > 0 ? Math.min(100, Math.floor(pageSize)) : 20;
+    const start = (safePage - 1) * safePageSize;
+    const paged = data.slice(start, start + safePageSize);
+    return {
+      data: paged,
+      cachedAt,
+      total: data.length,
+      phase,
+      page: safePage,
+      pageSize: safePageSize,
+      hasMore: start + paged.length < data.length,
+    };
   }
 
   private formatComment(comment: {

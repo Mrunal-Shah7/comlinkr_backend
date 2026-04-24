@@ -56,7 +56,26 @@ export class OnboardingService {
     });
   }
 
+  private assertSupportedEnrollmentRegion(country: string) {
+    const c = (country || '').trim().toLowerCase();
+    const allowed =
+      c === 'united states' ||
+      c === 'us' ||
+      c === 'usa' ||
+      c === 'united kingdom' ||
+      c === 'uk' ||
+      c === 'gb' ||
+      c === 'great britain';
+    if (!allowed) {
+      throw new BadRequestException({
+        code: 'REGION_NOT_SUPPORTED',
+        message: 'ComLinkr is currently available in the United States and United Kingdom only.',
+      });
+    }
+  }
+
   async setLocation(userId: string, dto: SetLocationDto) {
+    this.assertSupportedEnrollmentRegion(dto.country);
     await this.prisma.userLocation.upsert({
       where: { userId },
       create: {

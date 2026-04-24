@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginationDto, createPaginationMeta } from '../../common/dto/pagination.dto';
 import { StorageService } from '../storage/storage.service';
@@ -7,6 +7,7 @@ import { COUNTRY_NEWS_MAP } from './news.constants';
 import {
   fetchAllNewsBuckets,
   fetchGoogleNewsRSS,
+  enrichArticlesWithImages,
   type RssNewsArticle,
 } from './google-news-rss.util';
 
@@ -22,6 +23,7 @@ export interface NewsExplorePayload {
 
 @Injectable()
 export class NewsService {
+  private readonly logger = new Logger(NewsService.name);
   private readonly cache = new Map<
     string,
     { ts: number; phase: 'primary' | 'full'; cachedAt: string; data: RssNewsArticle[] }
@@ -40,13 +42,14 @@ export class NewsService {
     country: string,
     page = 1,
     pageSize = 20,
+    force = false,
   ): Promise<NewsExplorePayload> {
     const c = (city || 'Los Angeles').trim();
     const co = (country || 'United States').trim();
     this.trackActiveLocation(c, co);
     const cacheKey = `${c.toLowerCase()}|${co.toLowerCase()}`;
     const hit = this.cache.get(cacheKey);
-    if (hit && Date.now() - hit.ts < this.ttlMs) {
+    if (!force && hit && Date.now() - hit.ts < this.ttlMs) {
       return this.toPagedPayload(hit.data, hit.cachedAt, 'full', page, pageSize);
     }
 
@@ -77,6 +80,24 @@ export class NewsService {
 
     const cachedAt = new Date().toISOString();
     this.cache.set(cacheKey, { ts: Date.now(), phase: 'full', cachedAt, data: unique });
+
+    void enrichArticlesWithImages(unique)
+      .then((enriched) => {
+        const current = this.cache.get(cacheKey);
+        if (!current || current.cachedAt !== cachedAt || current.phase !== 'full') return;
+        this.cache.set(cacheKey, {
+          ts: Date.now(),
+          phase: 'full',
+          cachedAt,
+          data: enriched,
+        });
+      })
+      .catch((err: unknown) => {
+        this.logger.warn(
+          `News image enrichment failed for ${cacheKey}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
+
     return this.toPagedPayload(unique, cachedAt, 'full', page, pageSize);
   }
 
@@ -85,6 +106,7 @@ export class NewsService {
     country: string,
     page = 1,
     pageSize = 20,
+    force = false,
   ): Promise<NewsExplorePayload> {
     const c = (city || 'Los Angeles').trim();
     const co = (country || 'United States').trim();
@@ -92,7 +114,7 @@ export class NewsService {
     const geo = this.resolveGeoCountry(co);
     const cacheKey = `primary:${c.toLowerCase()}|${co.toLowerCase()}`;
     const hit = this.cache.get(cacheKey);
-    if (hit && Date.now() - hit.ts < this.primaryTtlMs) {
+    if (!force && hit && Date.now() - hit.ts < this.primaryTtlMs) {
       return this.toPagedPayload(hit.data, hit.cachedAt, 'primary', page, pageSize);
     }
 

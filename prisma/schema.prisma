@@ -302,6 +302,7 @@ model User {
   notifications           Notification[]
   newsArticleLikes        NewsArticleLike[]
   newsArticleComments     NewsArticleComment[]
+  storyComments           StoryComment[]
   pushDevices             PushDevice[]
   notificationPreference  NotificationPreference?
   privacySettings         PrivacySettings?
@@ -1000,11 +1001,28 @@ model Story {
   location        String?
   mediaUrl        String
   viewsCount      Int            @default(0)
+  commentCount    Int            @default(0)
   expiresAt       DateTime
   createdAt       DateTime       @default(now())
 
-  author User       @relation(fields: [authorId], references: [id], onDelete: Cascade)
-  saves  StorySave[]
+  author   User          @relation(fields: [authorId], references: [id], onDelete: Cascade)
+  saves    StorySave[]
+  comments StoryComment[]
+}
+
+model StoryComment {
+  id        String   @id @default(uuid())
+  storyId   String
+  authorId  String
+  content   String   @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  story  Story @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  author User  @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([storyId, createdAt(sort: Asc)])
+  @@index([authorId])
 }
 
 model RoommateSave {

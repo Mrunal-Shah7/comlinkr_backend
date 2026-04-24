@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -7,6 +8,7 @@ import { randomUUID } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { CreateStoryDto } from './dto/create-story.dto';
+import { AddStoryCommentDto } from './dto/add-story-comment.dto';
 import {
   PaginationDto,
   createPaginationMeta,
@@ -29,8 +31,10 @@ export class StoriesService {
     private readonly storageService: StorageService,
   ) {}
 
-  private buildFileUrl(mediaUrl: string): string {
-    return mediaUrl;
+  private buildFileUrl(stored: string | null | undefined): string | null {
+    if (!stored) return null;
+    if (stored.startsWith('http')) return stored;
+    return this.storageService.resolvePublicUrl(stored);
   }
 
   /** @param isSaved — from batch `StorySave` lookup (never infer from `story.saves` here). */
@@ -48,6 +52,7 @@ export class StoriesService {
       location: story.location,
       mediaUrl: story.mediaUrl,
       viewsCount: story.viewsCount,
+      commentCount: story.commentCount ?? 0,
       expiresAt: story.expiresAt,
       createdAt: story.createdAt,
       isExpired,
@@ -55,9 +60,7 @@ export class StoriesService {
         id: story.author.id,
         username: story.author.username,
         name: story.author.fullName,
-        avatarUrl: story.author.avatarUrl
-          ? this.buildFileUrl(story.author.avatarUrl)
-          : null,
+        avatarUrl: this.buildFileUrl(story.author.avatarUrl),
       },
       isSaved,
     };
@@ -120,6 +123,7 @@ export class StoriesService {
         mediaUrl: mediaUrl ?? '',
         expiresAt,
         viewsCount: 0,
+        commentCount: 0,
       },
       include: {
         author: {
@@ -308,5 +312,166 @@ export class StoriesService {
       savedAt: row.createdAt.toISOString(),
     }));
     return { data, meta: createPaginationMeta(page, limit, total) };
+  }
+
+  private formatStoryComment(comment: {
+    id: string;
+    storyId: string;
+    content: string;
+    createdAt: Date;
+    author: { id: string; username: string; fullName: string; avatarUrl: string | null };
+  }) {
+    return {
+      id: comment.id,
+      storyId: comment.storyId,
+      content: comment.content,
+      createdAt: comment.createdAt,
+      author: {
+        id: comment.author.id,
+        username: comment.author.username,
+        name: comment.author.fullName,
+        avatarUrl: this.buildFileUrl(comment.author.avatarUrl),
+      },
+    };
+  }
+
+  async addStoryComment(userId: string, storyId: string, dto: AddStoryCommentDto) {
+    const story = await this.prisma.story.findUnique({
+      where: { id: storyId },
+      select: { id: true, expiresAt: true },
+    });
+    if (!story || story.expiresAt < new Date()) {
+      throw new NotFoundException({
+        code: 'RESOURCE_NOT_FOUND',
+        message: 'This story has expired or does not exist.',
+      });
+    }
+
+    const created = await this.prisma.$transaction(async (tx) => {
+      const row = await tx.storyComment.create({
+        data: {
+          storyId,
+          authorId: userId,
+          content: dto.content,
+        },
+      });
+      await tx.story.update({
+        where: { id: storyId },
+        data: { commentCount: { increment: 1 } },
+      });
+      return tx.storyComment.findUnique({
+        where: { id: row.id },
+        include: {
+          author: {
+            select: {
+              id: true,
+              username: true,
+              fullName: true,
+              avatarUrl: true,
+            },
+          },
+        },
+      });
+    });
+
+    if (!created?.author) {
+      throw new NotFoundException({ code: 'RESOURCE_NOT_FOUND', message: 'Comment not found' });
+    }
+    return this.formatStoryComment(created);
+  }
+
+  async getStoryComments(storyId: string, query: PaginationDto) {
+    const page = query.page ?? 1;
+    const limit = query.limit ?? 20;
+    const skip = (page - 1) * limit;
+
+    const story = await this.prisma.story.findUnique({
+      where: { id: storyId },
+      select: { id: true },
+    });
+    if (!story) {
+      throw new NotFoundException({ code: 'RESOURCE_NOT_FOUND', message: 'Story not found' });
+    }
+
+    const [rows, total] = await this.prisma.$transaction([
+      this.prisma.storyComment.findMany({
+        where: { storyId },
+        orderBy: { createdAt: 'asc' },
+        skip,
+        take: limit,
+        include: {
+          author: {
+            select: {
+              id: true,
+              username: true,
+              fullName: true,
+              avatarUrl: true,
+            },
+          },
+        },
+      }),
+      this.prisma.storyComment.count({ where: { storyId } }),
+    ]);
+
+    const data = rows.map((r) => this.formatStoryComment(r));
+    return { data, meta: createPaginationMeta(page, limit, total) };
+  }
+
+  async deleteStoryComment(userId: string, storyId: string, commentId: string) {
+    const comment = await this.prisma.storyComment.findUnique({
+      where: { id: commentId },
+      include: {
+        story: { select: { id: true, authorId: true, commentCount: true } },
+      },
+    });
+    if (!comment || comment.storyId !== storyId) {
+      throw new NotFoundException({ code: 'RESOURCE_NOT_FOUND', message: 'Comment not found' });
+    }
+    const isAuthor = comment.authorId === userId;
+    const isStoryOwner = comment.story.authorId === userId;
+    if (!isAuthor && !isStoryOwner) {
+      throw new ForbiddenException('You cannot delete this comment.');
+    }
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.storyComment.delete({ where: { id: commentId } });
+      if (comment.story.commentCount > 0) {
+        await tx.story.update({
+          where: { id: storyId },
+          data: { commentCount: { decrement: 1 } },
+        });
+      }
+    });
+
+    return { deleted: true as const };
+  }
+
+  /** Author-only: remove story and media before expiry (DB cascade drops comments & saves). */
+  async deleteStory(userId: string, storyId: string) {
+    const story = await this.prisma.story.findUnique({
+      where: { id: storyId },
+      select: { id: true, authorId: true, mediaUrl: true },
+    });
+    if (!story) {
+      throw new NotFoundException({
+        code: 'RESOURCE_NOT_FOUND',
+        message: 'Story not found',
+      });
+    }
+    if (story.authorId !== userId) {
+      throw new ForbiddenException('You can only delete your own stories.');
+    }
+
+    await this.prisma.story.delete({ where: { id: storyId } });
+
+    if (story.mediaUrl) {
+      try {
+        await this.storageService.deleteFile(story.mediaUrl);
+      } catch {
+        // ignore S3 cleanup failures
+      }
+    }
+
+    return { deleted: true as const };
   }
 }

@@ -1,7 +1,10 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   Post,
   Query,
@@ -17,9 +20,11 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { Public } from '../../common/decorators/public.decorator';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { StoriesService } from './stories.service';
 import { CreateStoryDto } from './dto/create-story.dto';
+import { AddStoryCommentDto } from './dto/add-story-comment.dto';
 
 const STORY_MEDIA_MAX_SIZE = 10 * 1024 * 1024;
 
@@ -74,6 +79,40 @@ export class StoriesController {
     return this.storiesService.getActiveStories(userId);
   }
 
+  /** Before @Get(':id') — paginated comments (public). */
+  @Public()
+  @Get(':id/comments')
+  @ApiOperation({ summary: 'Paginated comments for a story' })
+  @ApiQuery({ name: 'page', required: false })
+  @ApiQuery({ name: 'limit', required: false })
+  @ApiResponse({ status: 200, description: 'Comments' })
+  async getComments(@Param('id') id: string, @Query() query: PaginationDto) {
+    return this.storiesService.getStoryComments(id, query);
+  }
+
+  @Post(':id/comments')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Add a comment to a story' })
+  @ApiResponse({ status: 201, description: 'Comment created' })
+  async addComment(
+    @CurrentUser('id') userId: string,
+    @Param('id') id: string,
+    @Body() dto: AddStoryCommentDto,
+  ) {
+    return this.storiesService.addStoryComment(userId, id, dto);
+  }
+
+  @Delete(':id/comments/:commentId')
+  @ApiOperation({ summary: 'Delete a story comment' })
+  @ApiResponse({ status: 200, description: 'Deleted' })
+  async deleteComment(
+    @CurrentUser('id') userId: string,
+    @Param('id') id: string,
+    @Param('commentId') commentId: string,
+  ) {
+    return this.storiesService.deleteStoryComment(userId, id, commentId);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'View a story (increments view count)' })
   @ApiResponse({ status: 200, description: 'Story detail' })
@@ -93,5 +132,17 @@ export class StoriesController {
     @Param('id') id: string,
   ) {
     return this.storiesService.toggleStorySave(userId, id);
+  }
+
+  @Delete(':id')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Delete own story (before or after expiry if still stored)' })
+  @ApiResponse({ status: 200, description: 'Story removed' })
+  @ApiResponse({ status: 403, description: 'Not the author' })
+  async deleteStory(
+    @CurrentUser('id') userId: string,
+    @Param('id') id: string,
+  ) {
+    return this.storiesService.deleteStory(userId, id);
   }
 }

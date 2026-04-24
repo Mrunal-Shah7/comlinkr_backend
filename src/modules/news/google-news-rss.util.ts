@@ -206,6 +206,97 @@ export async function fetchGoogleNewsRSS(
   }
 }
 
+/** Decode a Google News redirect URL to the real article URL (same logic as mobile feed; Node Buffer instead of atob). */
+export function decodeGoogleNewsUrl(googleUrl: string): string | null {
+  try {
+    const match = googleUrl.match(/\/(?:rss\/)?articles\/([A-Za-z0-9_-]+)/);
+    if (!match) return null;
+    let b64 = match[1].replace(/-/g, '+').replace(/_/g, '/');
+    while (b64.length % 4 !== 0) b64 += '=';
+    const decoded = Buffer.from(b64, 'base64').toString('binary');
+    const httpsIdx = decoded.indexOf('https://');
+    if (httpsIdx !== -1) {
+      return decoded.slice(httpsIdx).replace(/[\x00-\x1F\x7F].*/s, '');
+    }
+    const httpIdx = decoded.indexOf('http://');
+    if (httpIdx !== -1) {
+      return decoded.slice(httpIdx).replace(/[\x00-\x1F\x7F].*/s, '');
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+const OG_META_PATTERNS: RegExp[] = [
+  /<meta\s+[^>]*property=["']og:image["'][^>]*content=["']([^"']+)["']/i,
+  /<meta\s+[^>]*content=["']([^"']+)["'][^>]*property=["']og:image["']/i,
+  /<meta\s+[^>]*name=["']twitter:image["'][^>]*content=["']([^"']+)["']/i,
+  /<meta\s+[^>]*content=["']([^"']+)["'][^>]*name=["']twitter:image["']/i,
+  /<meta\s+[^>]*name=["']twitter:image:src["'][^>]*content=["']([^"']+)["']/i,
+  /<meta\s+[^>]*content=["']([^"']+)["'][^>]*name=["']twitter:image:src["']/i,
+];
+
+function extractOgImageFromHtml(html: string): string | null {
+  const slice = html.length > 80_000 ? html.slice(0, 80_000) : html;
+  for (const re of OG_META_PATTERNS) {
+    const m = slice.match(re);
+    const url = m?.[1]?.trim();
+    if (url && url.startsWith('https://')) return url;
+  }
+  return null;
+}
+
+/** Best-effort fetch of og:image / twitter:image from an article page. Never throws. */
+export async function fetchOgImage(articleUrl: string): Promise<string | null> {
+  try {
+    let target = articleUrl;
+    if (articleUrl.includes('news.google.com')) {
+      const decoded = decodeGoogleNewsUrl(articleUrl);
+      if (!decoded) return null;
+      target = decoded;
+    }
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    const resp = await fetch(target, {
+      headers: {
+        Accept: 'text/html',
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      },
+      signal: controller.signal,
+      redirect: 'follow',
+    });
+    clearTimeout(timeoutId);
+    if (!resp.ok) return null;
+    const text = await resp.text();
+    return extractOgImageFromHtml(text);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fills `image` for up to the first 30 articles that had `image: null`, in parallel.
+ * Preserves order and leaves other articles unchanged.
+ */
+export async function enrichArticlesWithImages(articles: RssNewsArticle[]): Promise<RssNewsArticle[]> {
+  const out = articles.map((a) => ({ ...a }));
+  const nullIndices: number[] = [];
+  for (let i = 0; i < out.length; i++) {
+    if (!out[i].image) nullIndices.push(i);
+  }
+  const batch = nullIndices.slice(0, 30);
+  const settled = await Promise.allSettled(batch.map((idx) => fetchOgImage(out[idx].url)));
+  settled.forEach((r, j) => {
+    if (r.status === 'fulfilled' && r.value) {
+      const idx = batch[j];
+      out[idx] = { ...out[idx], image: r.value };
+    }
+  });
+  return out;
+}
+
 export async function fetchAllNewsBuckets(
   cityName: string,
   countryName: string,

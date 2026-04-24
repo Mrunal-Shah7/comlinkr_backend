@@ -56,7 +56,7 @@ const BADGE_TYPES = [
       'Restaurant physical address',
     ],
     requiredFields: ['fullLegalName', 'businessPhone', 'restaurantName', 'restaurantAddress'],
-    requiredDocuments: ['GOVERNMENT_ID', 'BUSINESS_LICENSE'],
+    requiredDocuments: [],
   },
   {
     type: 'AGENCY',
@@ -76,7 +76,7 @@ const BADGE_TYPES = [
       'Company website or portfolio',
       'Agency contact details',
     ],
-    requiredFields: ['fullLegalName', 'businessPhone', 'agencyName', 'agencyLicense'],
+    requiredFields: ['fullLegalName', 'businessPhone', 'agencyName'],
     requiredDocuments: ['GOVERNMENT_ID', 'BUSINESS_LICENSE'],
   },
   {
@@ -97,14 +97,14 @@ const BADGE_TYPES = [
       'A brief bio about your food interests and local knowledge',
     ],
     requiredFields: ['fullLegalName', 'businessPhone', 'neighborhoodArea', 'reviewerBio'],
-    requiredDocuments: ['GOVERNMENT_ID'],
+    requiredDocuments: [],
   },
 ];
 
 const TYPE_REQUIRED_FIELDS: Record<BadgeType, (keyof ApplyBadgeDto)[]> = {
   LANDLORD: ['ownershipType', 'propertyAddress'],
   RESTAURANT_OWNER: ['restaurantName', 'restaurantAddress'],
-  AGENCY: ['agencyName', 'agencyLicense'],
+  AGENCY: ['agencyName'],
   LOCAL_REVIEWER: ['neighborhoodArea', 'reviewerBio'],
 };
 
@@ -192,10 +192,42 @@ export class BadgesService {
       }
     }
 
-    if (!files?.length) {
+    const badgeMeta = BADGE_TYPES.find((b) => b.type === dto.badgeType);
+    const documentsRequired = (badgeMeta?.requiredDocuments?.length ?? 0) > 0;
+    if (documentsRequired && (!files?.length)) {
       throw new BadRequestException(
         'At least one document is required (Government-issued ID).',
       );
+    }
+    if (!files?.length) {
+      const application = await this.prisma.$transaction(async (tx) => {
+        const app = await tx.badgeApplication.create({
+          data: {
+            userId,
+            badgeType: dto.badgeType,
+            status: 'PENDING',
+            fullLegalName: dto.fullLegalName,
+            businessPhone: dto.businessPhone,
+            businessEmail: dto.businessEmail ?? null,
+            ownershipType: dto.ownershipType ?? null,
+            propertyAddress: dto.propertyAddress ?? null,
+            restaurantName: dto.restaurantName ?? null,
+            cuisineType: dto.cuisineType ?? null,
+            restaurantAddress: dto.restaurantAddress ?? null,
+            agencyName: dto.agencyName ?? null,
+            agencyLicense: dto.agencyLicense ?? null,
+            propertiesManaged: dto.propertiesManaged ?? null,
+            companyWebsite: dto.companyWebsite ?? null,
+            neighborhoodArea: dto.neighborhoodArea ?? null,
+            reviewerBio: dto.reviewerBio ?? null,
+          },
+        });
+        return tx.badgeApplication.findUnique({
+          where: { id: app.id },
+          include: { documents: true },
+        });
+      });
+      return this.formatApplication(application!, userId);
     }
     for (const file of files) {
       if (file.size > DOC_MAX_SIZE) {
@@ -248,13 +280,15 @@ export class BadgesService {
           reviewerBio: dto.reviewerBio ?? null,
         },
       });
-      await tx.badgeDocument.createMany({
-        data: uploadedDocs.map((d) => ({
-          applicationId: app.id,
-          documentKey: d.documentKey,
-          documentType: d.documentType,
-        })),
-      });
+      if (uploadedDocs.length > 0) {
+        await tx.badgeDocument.createMany({
+          data: uploadedDocs.map((d) => ({
+            applicationId: app.id,
+            documentKey: d.documentKey,
+            documentType: d.documentType,
+          })),
+        });
+      }
       return tx.badgeApplication.findUnique({
         where: { id: app.id },
         include: { documents: true },

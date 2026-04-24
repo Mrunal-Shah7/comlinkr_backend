@@ -18,16 +18,18 @@ export class NewsController {
       'Aggregated live news for Explore (Google News RSS via server — same mix as mobile)',
   })
   @ApiQuery({ name: 'phase', required: false, enum: ['primary', 'full'] })
+  @ApiQuery({ name: 'force', required: false, type: Boolean })
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
   @ApiQuery({ name: 'pageSize', required: false, type: Number, example: 20 })
   @ApiResponse({ status: 200, description: 'Deduped articles + cache timestamp' })
   async explore(@Query() query: NewsExploreQueryDto) {
     const page = query.page ?? 1;
     const pageSize = query.pageSize ?? 20;
+    const force = query.force === true;
     if (query.phase === 'primary') {
-      return this.newsService.getExploreFeedPrimary(query.city ?? '', query.country ?? '', page, pageSize);
+      return this.newsService.getExploreFeedPrimary(query.city ?? '', query.country ?? '', page, pageSize, force);
     }
-    return this.newsService.getExploreFeed(query.city ?? '', query.country ?? '', page, pageSize);
+    return this.newsService.getExploreFeed(query.city ?? '', query.country ?? '', page, pageSize, force);
   }
 
   @Get('articles/:id/stats')

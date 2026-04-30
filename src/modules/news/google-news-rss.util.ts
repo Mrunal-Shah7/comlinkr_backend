@@ -11,6 +11,99 @@ export interface RssNewsArticle {
   category: string;
 }
 
+const LOCAL_NEWS_PHRASINGS = [
+  '{city} news',
+  '{city} latest news',
+  '{city} today',
+  '{city} headlines',
+  '{city} breaking news',
+];
+
+const NATIONAL_NEWS_PHRASINGS = [
+  '{country} news today',
+  '{country} latest headlines',
+  '{country} breaking news',
+  '{country} top stories',
+  '{country} news update',
+];
+
+const WORLD_NEWS_PHRASINGS = [
+  'world news today',
+  'global news headlines',
+  'international news today',
+  'world top stories',
+];
+
+const BUSINESS_PHRASINGS = [
+  'business finance news',
+  'economy markets today',
+  'financial news update',
+  'business headlines today',
+];
+
+const TECHNOLOGY_PHRASINGS = [
+  'technology news today',
+  'tech headlines',
+  'latest tech news',
+  'technology update today',
+];
+
+const HEALTH_PHRASINGS = [
+  'health wellness news',
+  'health news today',
+  'medical news headlines',
+  'health update today',
+];
+
+const SPORTS_PHRASINGS = [
+  'sports news today',
+  'sports headlines',
+  'latest sports results',
+  'sports update today',
+];
+
+const ENTERTAINMENT_PHRASINGS = [
+  'entertainment news today',
+  'celebrity news headlines',
+  'entertainment update',
+  'movies music news today',
+];
+
+export function getTimeBucket(): string {
+  const now = new Date();
+  const year = now.getUTCFullYear();
+  const month = String(now.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(now.getUTCDate()).padStart(2, '0');
+  const hour = String(now.getUTCHours()).padStart(2, '0');
+  const minute = String(Math.floor(now.getUTCMinutes() / 15) * 15).padStart(2, '0');
+  return `${year}-${month}-${day} ${hour}:${minute}`;
+}
+
+export function getRotationIndex(arrayLength: number): number {
+  if (arrayLength <= 0) return 0;
+  return Math.floor(Date.now() / 1000 / 900) % arrayLength;
+}
+
+function phraseAt(phrases: string[], index: number): string {
+  if (phrases.length === 0) return '';
+  const idx = ((index % phrases.length) + phrases.length) % phrases.length;
+  return phrases[idx] ?? phrases[0] ?? '';
+}
+
+export function buildLocalNewsQuery(cityName: string, rotationIndex: number, timeBucket: string): string {
+  const phrase = phraseAt(LOCAL_NEWS_PHRASINGS, rotationIndex).replace('{city}', cityName);
+  return `${phrase} ${timeBucket}`;
+}
+
+export function buildNationalNewsQuery(
+  countryName: string,
+  rotationIndex: number,
+  timeBucket: string,
+): string {
+  const phrase = phraseAt(NATIONAL_NEWS_PHRASINGS, rotationIndex).replace('{country}', countryName);
+  return `${phrase} ${timeBucket}`;
+}
+
 function hash32(s: string): string {
   let h = 2166136261;
   for (let i = 0; i < s.length; i++) {
@@ -218,10 +311,6 @@ export function decodeGoogleNewsUrl(googleUrl: string): string | null {
     if (httpsIdx !== -1) {
       return decoded.slice(httpsIdx).replace(/[\x00-\x1F\x7F].*/s, '');
     }
-    const httpIdx = decoded.indexOf('http://');
-    if (httpIdx !== -1) {
-      return decoded.slice(httpIdx).replace(/[\x00-\x1F\x7F].*/s, '');
-    }
     return null;
   } catch {
     return null;
@@ -260,7 +349,7 @@ export async function fetchOgImage(articleUrl: string): Promise<string | null> {
     const timeoutId = setTimeout(() => controller.abort(), 5000);
     const resp = await fetch(target, {
       headers: {
-        Accept: 'text/html',
+        Accept: 'text/html,application/xhtml+xml,*/*',
         'User-Agent':
           'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
       },
@@ -302,27 +391,34 @@ export async function fetchAllNewsBuckets(
   countryName: string,
   gl: string,
   hl: string,
+  rotationSeed?: number,
 ): Promise<{
   local: RssNewsArticle[];
   national: RssNewsArticle[];
   world: RssNewsArticle[];
   topics: Record<string, RssNewsArticle[]>;
 }> {
+  const timeBucket = getTimeBucket();
+  const rotationIndex = rotationSeed ?? getRotationIndex(60);
+  const localQuery = buildLocalNewsQuery(cityName, rotationIndex, timeBucket);
+  const nationalQuery = buildNationalNewsQuery(countryName, rotationIndex, timeBucket);
+  const worldQuery = `${phraseAt(WORLD_NEWS_PHRASINGS, rotationIndex)} ${timeBucket}`;
+  const businessQuery = `${phraseAt(BUSINESS_PHRASINGS, rotationIndex)} ${timeBucket}`;
+  const technologyQuery = `${phraseAt(TECHNOLOGY_PHRASINGS, rotationIndex)} ${timeBucket}`;
+  const healthQuery = `${phraseAt(HEALTH_PHRASINGS, rotationIndex)} ${timeBucket}`;
+  const sportsQuery = `${phraseAt(SPORTS_PHRASINGS, rotationIndex)} ${timeBucket}`;
+  const entertainmentQuery = `${phraseAt(ENTERTAINMENT_PHRASINGS, rotationIndex)} ${timeBucket}`;
+
   const [local, national, world, biz, tech, health, sports, entertainment] =
     await Promise.all([
-      fetchGoogleNewsRSS(`${cityName} news`, gl, hl, 'local'),
-      fetchGoogleNewsRSS(`${countryName} news today`, gl, hl, 'nation'),
-      fetchGoogleNewsRSS('world news today', gl, hl, 'world'),
-      fetchGoogleNewsRSS('business finance', gl, hl, 'business'),
-      fetchGoogleNewsRSS('technology', gl, hl, 'technology'),
-      fetchGoogleNewsRSS('health wellness', gl, hl, 'health'),
-      fetchGoogleNewsRSS('sports', gl, hl, 'sports'),
-      fetchGoogleNewsRSS(
-        'entertainment movies music',
-        gl,
-        hl,
-        'entertainment',
-      ),
+      fetchGoogleNewsRSS(localQuery, gl, hl, 'local'),
+      fetchGoogleNewsRSS(nationalQuery, gl, hl, 'nation'),
+      fetchGoogleNewsRSS(worldQuery, gl, hl, 'world'),
+      fetchGoogleNewsRSS(businessQuery, gl, hl, 'business'),
+      fetchGoogleNewsRSS(technologyQuery, gl, hl, 'technology'),
+      fetchGoogleNewsRSS(healthQuery, gl, hl, 'health'),
+      fetchGoogleNewsRSS(sportsQuery, gl, hl, 'sports'),
+      fetchGoogleNewsRSS(entertainmentQuery, gl, hl, 'entertainment'),
     ]);
 
   return {

@@ -41,6 +41,12 @@ export interface UserResponse {
   createdAt: Date;
   /** From `UserLocation.city` when set during onboarding / profile. */
   city: string | null;
+  userLocation: {
+    country: string;
+    countryCode: string;
+    city: string;
+    state: string;
+  } | null;
 }
 
 export interface ProvidersResponse {
@@ -101,7 +107,7 @@ export class AuthService {
     role: string;
     onboardingCompleted: boolean;
     createdAt: Date;
-    location?: { city: string } | null;
+    location?: { city: string; country: string; countryCode: string; state: string } | null;
   }): AuthSessionPayload {
     return {
       user: this.formatUserResponse(user),
@@ -119,7 +125,7 @@ export class AuthService {
     role: string;
     onboardingCompleted: boolean;
     createdAt: Date;
-    location?: { city: string } | null;
+    location?: { city: string; country: string; countryCode: string; state: string } | null;
   }): UserResponse {
     return {
       id: user.id,
@@ -133,6 +139,14 @@ export class AuthService {
       onboardingDone: user.onboardingCompleted,
       createdAt: user.createdAt,
       city: user.location?.city ?? null,
+      userLocation: user.location
+        ? {
+            country: user.location.country,
+            countryCode: user.location.countryCode,
+            city: user.location.city,
+            state: user.location.state,
+          }
+        : null,
     };
   }
 

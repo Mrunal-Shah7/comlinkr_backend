@@ -4,10 +4,13 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { SupportTicket } from '@prisma/client';
 import { randomUUID } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
+import { ExpoNotificationService } from '../notifications/expo-notification.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import { CreateSupportTicketDto } from './dto/create-support-ticket.dto';
 import { AchievementDto, UserStatsDto } from './dto/user-response.dto';
 
 const AVATAR_MAX_SIZE = 5 * 1024 * 1024;
@@ -18,6 +21,7 @@ export class UsersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly storageService: StorageService,
+    private readonly expoNotificationService: ExpoNotificationService,
   ) {}
 
   private buildAvatarUrl(avatarUrl: string | null): string | null {
@@ -504,6 +508,39 @@ export class UsersService {
 
   async getMyAchievements(userId: string): Promise<AchievementDto[]> {
     return this.computeAchievements(userId);
+  }
+
+  async registerPushToken(userId: string, token: string): Promise<void> {
+    await this.expoNotificationService.registerToken(userId, token);
+  }
+
+  async removePushToken(userId: string, token: string): Promise<void> {
+    const pushToken = await this.prisma.pushToken.findUnique({
+      where: { token },
+      select: { userId: true },
+    });
+    if (!pushToken || pushToken.userId !== userId) {
+      return;
+    }
+    await this.expoNotificationService.removeToken(token);
+  }
+
+  async createSupportTicket(userId: string, dto: CreateSupportTicketDto): Promise<SupportTicket> {
+    return this.prisma.supportTicket.create({
+      data: {
+        userId,
+        subject: dto.subject,
+        message: dto.message,
+        status: 'OPEN',
+      },
+    });
+  }
+
+  async getMySupportTickets(userId: string): Promise<SupportTicket[]> {
+    return this.prisma.supportTicket.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+    });
   }
 }
 

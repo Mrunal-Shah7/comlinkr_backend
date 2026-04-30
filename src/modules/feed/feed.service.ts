@@ -179,27 +179,32 @@ export class FeedService {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
 
-    if (!city) {
-      return {
-        data: [],
-        meta: createPaginationMeta(page, limit, 0),
-      };
-    }
+    const cityTrimmed = city?.trim() ?? '';
 
-    const cityTrimmed = city.trim();
-    const where: any = {
-      isPublished: true,
-      OR: [
-        { authorId: userId },
-        {
-          author: {
-            location: {
-              city: { equals: cityTrimmed, mode: 'insensitive' },
+    // City-scoped feed when we know the viewer's city; otherwise show all published
+    // posts so News → Community is not empty (e.g. onboarding without UserLocation yet).
+    // Also include authors with no UserLocation row so their posts are not invisible
+    // to neighbors who do have a city set.
+    const where: any = cityTrimmed
+      ? {
+          isPublished: true,
+          OR: [
+            { authorId: userId },
+            {
+              author: {
+                OR: [
+                  { location: { is: null } },
+                  {
+                    location: {
+                      city: { equals: cityTrimmed, mode: 'insensitive' },
+                    },
+                  },
+                ],
+              },
             },
-          },
-        },
-      ],
-    };
+          ],
+        }
+      : { isPublished: true };
 
     if (query.category) {
       where.category = query.category;

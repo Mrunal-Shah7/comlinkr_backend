@@ -81,6 +81,17 @@ enum PriceRange {
   LUXURY
 }
 
+enum ListingReportStatus {
+  PENDING
+  RESOLVED
+  DISMISSED
+}
+
+enum ListingReportTargetType {
+  HOUSING
+  RESTAURANT
+}
+
 enum CommunityQuestionCategory {
   HOUSING
   FOOD
@@ -214,6 +225,18 @@ enum NotificationType {
   SYSTEM
 }
 
+enum SupportTicketStatus {
+  OPEN
+  REPLIED
+  CLOSED
+}
+
+enum BroadcastAudienceType {
+  ALL
+  CITY
+  SELECTIVE
+}
+
 enum SharedSpaceApplicationStatus {
   PENDING
   ACCEPTED
@@ -303,7 +326,15 @@ model User {
   newsArticleLikes        NewsArticleLike[]
   newsArticleComments     NewsArticleComment[]
   storyComments           StoryComment[]
+  storyLikes              StoryLike[]
+  listingReports          ListingReport[]
   pushDevices             PushDevice[]
+  pushTokens              PushToken[]
+  broadcastsSent          BroadcastNotification[]
+  supportTickets          SupportTicket[]
+  repliedSupportTickets   SupportTicket[]          @relation("SupportTicketRepliedBy")
+  adminPolls              AdminPoll[]
+  adminPollVotes          AdminPollVote[]
   notificationPreference  NotificationPreference?
   privacySettings         PrivacySettings?
   blockedUsers            BlockedUser[]          @relation("Blocker")
@@ -958,6 +989,99 @@ model PushDevice {
   @@index([userId])
 }
 
+model PushToken {
+  id        String   @id @default(uuid())
+  userId    String
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model BroadcastNotification {
+  id              String                @id @default(uuid())
+  title           String
+  body            String
+  sentById        String
+  audienceType    BroadcastAudienceType
+  audienceCity    String?
+  audienceUserIds String[]
+  recipientCount  Int                   @default(0)
+  createdAt       DateTime              @default(now())
+
+  sentBy User @relation(fields: [sentById], references: [id], onDelete: Cascade)
+
+  @@index([sentById])
+  @@index([createdAt])
+}
+
+model SupportTicket {
+  id          String              @id @default(uuid())
+  userId      String
+  subject     String              @db.VarChar(200)
+  message     String              @db.VarChar(2000)
+  status      SupportTicketStatus @default(OPEN)
+  adminReply  String?             @db.VarChar(2000)
+  repliedAt   DateTime?
+  repliedById String?
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  user      User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  repliedBy User? @relation("SupportTicketRepliedBy", fields: [repliedById], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model AdminPoll {
+  id          String            @id @default(uuid())
+  question    String            @db.VarChar(300)
+  createdById String
+  isActive    Boolean           @default(true)
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  createdBy User              @relation(fields: [createdById], references: [id], onDelete: Cascade)
+  options   AdminPollOption[]
+  votes     AdminPollVote[]
+
+  @@index([createdById])
+}
+
+model AdminPollOption {
+  id         String   @id @default(uuid())
+  pollId     String
+  text       String   @db.VarChar(200)
+  votesCount Int      @default(0)
+  order      Int      @default(0)
+
+  poll  AdminPoll       @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  votes AdminPollVote[]
+
+  @@index([pollId])
+}
+
+model AdminPollVote {
+  id        String   @id @default(uuid())
+  pollId    String
+  optionId  String
+  userId    String
+  createdAt DateTime @default(now())
+
+  poll   AdminPoll       @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  option AdminPollOption @relation(fields: [optionId], references: [id], onDelete: Cascade)
+  user   User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([pollId, userId])
+  @@index([optionId])
+  @@index([userId])
+}
+
 model ContentReport {
   id         String   @id @default(uuid())
   reporterId String
@@ -970,6 +1094,23 @@ model ContentReport {
 
   @@index([targetType, targetId])
   @@index([reporterId])
+}
+
+model ListingReport {
+  id         String                  @id @default(uuid())
+  reporterId String
+  targetType ListingReportTargetType
+  targetId   String
+  reason     String
+  status     ListingReportStatus     @default(PENDING)
+  createdAt  DateTime                @default(now())
+  updatedAt  DateTime                @updatedAt
+
+  reporter User @relation(fields: [reporterId], references: [id], onDelete: Cascade)
+
+  @@index([targetType, targetId])
+  @@index([reporterId])
+  @@index([status])
 }
 
 model EventAttendee {
@@ -1002,12 +1143,14 @@ model Story {
   mediaUrl        String
   viewsCount      Int            @default(0)
   commentCount    Int            @default(0)
+  likeCount       Int            @default(0)
   expiresAt       DateTime
   createdAt       DateTime       @default(now())
 
   author   User          @relation(fields: [authorId], references: [id], onDelete: Cascade)
   saves    StorySave[]
   comments StoryComment[]
+  likes    StoryLike[]
 }
 
 model StoryComment {
@@ -1048,6 +1191,20 @@ model StorySave {
   story Story @relation(fields: [storyId], references: [id], onDelete: Cascade)
 
   @@unique([userId, storyId])
+  @@index([userId])
+}
+
+model StoryLike {
+  id        String   @id @default(uuid())
+  storyId   String
+  userId    String
+  createdAt DateTime @default(now())
+
+  story Story @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, storyId])
+  @@index([storyId])
   @@index([userId])
 }
 

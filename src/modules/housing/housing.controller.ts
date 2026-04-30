@@ -22,6 +22,7 @@ import {
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { HousingService } from './housing.service';
 import { CreateListingDto } from './dto/create-listing.dto';
+import { CreateListingReportDto } from './dto/create-listing-report.dto';
 import { UpdateListingDto } from './dto/update-listing.dto';
 import { HousingQueryDto } from './dto/housing-query.dto';
 import { PaginationDto } from '../../common/dto/pagination.dto';
@@ -95,6 +96,16 @@ export class HousingController {
     @Param('id') id: string,
   ) {
     return this.housingService.getListingById(userId, id);
+  }
+
+  @Post(':id/report')
+  @ApiOperation({ summary: 'Report a housing listing' })
+  async reportListing(
+    @CurrentUser('id') userId: string,
+    @Param('id') listingId: string,
+    @Body() dto: CreateListingReportDto,
+  ) {
+    return this.housingService.reportListing(userId, listingId, dto.reason);
   }
 
   @Post()

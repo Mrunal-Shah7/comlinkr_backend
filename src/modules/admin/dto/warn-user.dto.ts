@@ -1,10 +1,10 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { IsNotEmpty, IsString, MaxLength } from 'class-validator';
 
-export class ReportReasonDto {
-  @ApiProperty({ maxLength: 1000 })
+export class WarnUserDto {
+  @ApiProperty({ maxLength: 2000 })
   @IsString()
   @IsNotEmpty()
-  @MaxLength(1000)
-  reason: string;
+  @MaxLength(2000)
+  message: string;
 }

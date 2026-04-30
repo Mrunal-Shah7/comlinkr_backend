@@ -873,10 +873,10 @@ export class FoodService {
     userId: string,
     restaurantId: string,
     reason: string,
-  ): Promise<{ ok: boolean }> {
+  ): Promise<{ message: string }> {
     const restaurant = await this.prisma.restaurant.findUnique({
       where: { id: restaurantId },
-      select: { id: true },
+      select: { id: true, ownerId: true },
     });
     if (!restaurant) {
       throw new NotFoundException({
@@ -884,7 +884,12 @@ export class FoodService {
         message: 'Restaurant not found',
       });
     }
-    await this.prisma.contentReport.create({
+
+    if (restaurant.ownerId === userId) {
+      throw new BadRequestException('You cannot report your own restaurant.');
+    }
+
+    await this.prisma.listingReport.create({
       data: {
         reporterId: userId,
         targetType: 'RESTAURANT',
@@ -892,7 +897,7 @@ export class FoodService {
         reason,
       },
     });
-    return { ok: true };
+    return { message: 'Report submitted. Our team will review it shortly.' };
   }
 
   /** Start DM with restaurant owner (mobile “order” / inquiry). */

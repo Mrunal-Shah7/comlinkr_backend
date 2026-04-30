@@ -24,6 +24,8 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { UsersService } from './users.service';
 import { PostsService } from '../posts/posts.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import { RegisterPushTokenDto } from './dto/register-push-token.dto';
+import { CreateSupportTicketDto } from './dto/create-support-ticket.dto';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 
 const AVATAR_MAX_SIZE = 5 * 1024 * 1024;
@@ -119,6 +121,37 @@ export class UsersController {
     @Query() query: PaginationDto,
   ) {
     return this.postsService.getMyPosts(userId, query);
+  }
+
+  @Post('push-token')
+  async registerPushToken(
+    @CurrentUser('id') userId: string,
+    @Body() dto: RegisterPushTokenDto,
+  ) {
+    await this.usersService.registerPushToken(userId, dto.token);
+    return { message: 'Push token registered' };
+  }
+
+  @Delete('push-token')
+  async removePushToken(
+    @CurrentUser('id') userId: string,
+    @Body() dto: RegisterPushTokenDto,
+  ) {
+    await this.usersService.removePushToken(userId, dto.token);
+    return { message: 'Push token removed' };
+  }
+
+  @Post('support')
+  async createSupportTicket(
+    @CurrentUser('id') userId: string,
+    @Body() dto: CreateSupportTicketDto,
+  ) {
+    return this.usersService.createSupportTicket(userId, dto);
+  }
+
+  @Get('support')
+  async getMySupportTickets(@CurrentUser('id') userId: string) {
+    return this.usersService.getMySupportTickets(userId);
   }
 
   @Get(':username/by-username')

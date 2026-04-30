@@ -1,8 +1,6 @@
-import { ApiProperty } from '@nestjs/swagger';
 import { IsNotEmpty, IsString, MaxLength } from 'class-validator';
 
-export class ReportReasonDto {
-  @ApiProperty({ maxLength: 1000 })
+export class CreateListingReportDto {
   @IsString()
   @IsNotEmpty()
   @MaxLength(1000)

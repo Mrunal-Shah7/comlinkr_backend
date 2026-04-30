@@ -5,8 +5,12 @@ import { StorageService } from '../storage/storage.service';
 import { AddNewsCommentDto } from './dto/add-news-comment.dto';
 import { COUNTRY_NEWS_MAP } from './news.constants';
 import {
+  buildLocalNewsQuery,
+  buildNationalNewsQuery,
   fetchAllNewsBuckets,
   fetchGoogleNewsRSS,
+  getRotationIndex,
+  getTimeBucket,
   enrichArticlesWithImages,
   type RssNewsArticle,
 } from './google-news-rss.util';
@@ -54,11 +58,17 @@ export class NewsService {
     }
 
     const geo = this.resolveGeoCountry(co);
+    const timeBucket = getTimeBucket();
+    // When force refresh is requested, rotate queries much faster so repeated pulls
+    // within the same 15-minute bucket still vary the Google RSS URL.
+    const rotationIndex = force ? Math.floor(Date.now() / 1000 / 10) : getRotationIndex(60);
+    const localQuery = buildLocalNewsQuery(c, rotationIndex, timeBucket);
+    const nationalQuery = buildNationalNewsQuery(co, rotationIndex, timeBucket);
 
     const [data, cityNews, countryNews] = await Promise.all([
-      fetchAllNewsBuckets(c, co, geo.gl, geo.hl),
-      fetchGoogleNewsRSS(`${c} local news today`, geo.gl, geo.hl, 'mycity'),
-      fetchGoogleNewsRSS(`${co} latest news headlines`, geo.gl, geo.hl, 'mycountry'),
+      fetchAllNewsBuckets(c, co, geo.gl, geo.hl, rotationIndex),
+      fetchGoogleNewsRSS(localQuery, geo.gl, geo.hl, 'mycity'),
+      fetchGoogleNewsRSS(nationalQuery, geo.gl, geo.hl, 'mycountry'),
     ]);
 
     const all = [
@@ -112,6 +122,10 @@ export class NewsService {
     const co = (country || 'United States').trim();
     this.trackActiveLocation(c, co);
     const geo = this.resolveGeoCountry(co);
+    const timeBucket = getTimeBucket();
+    const rotationIndex = force ? Math.floor(Date.now() / 1000 / 10) : getRotationIndex(60);
+    const localQuery = buildLocalNewsQuery(c, rotationIndex, timeBucket);
+    const nationalQuery = buildNationalNewsQuery(co, rotationIndex, timeBucket);
     const cacheKey = `primary:${c.toLowerCase()}|${co.toLowerCase()}`;
     const hit = this.cache.get(cacheKey);
     if (!force && hit && Date.now() - hit.ts < this.primaryTtlMs) {
@@ -119,8 +133,8 @@ export class NewsService {
     }
 
     const [cityNews, countryNews] = await Promise.all([
-      fetchGoogleNewsRSS(`${c} local news today`, geo.gl, geo.hl, 'mycity'),
-      fetchGoogleNewsRSS(`${co} latest news headlines`, geo.gl, geo.hl, 'mycountry'),
+      fetchGoogleNewsRSS(localQuery, geo.gl, geo.hl, 'mycity'),
+      fetchGoogleNewsRSS(nationalQuery, geo.gl, geo.hl, 'mycountry'),
     ]);
 
     const all = [...cityNews, ...countryNews];

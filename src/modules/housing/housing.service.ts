@@ -438,6 +438,35 @@ export class HousingService {
     return { interested: false };
   }
 
+  async reportListing(reporterId: string, listingId: string, reason: string) {
+    const listing = await this.prisma.housingListing.findUnique({
+      where: { id: listingId },
+      select: { id: true, ownerId: true },
+    });
+
+    if (!listing) {
+      throw new NotFoundException({
+        code: 'RESOURCE_NOT_FOUND',
+        message: 'Listing not found',
+      });
+    }
+
+    if (listing.ownerId === reporterId) {
+      throw new BadRequestException('You cannot report your own listing.');
+    }
+
+    await this.prisma.listingReport.create({
+      data: {
+        reporterId,
+        targetType: 'HOUSING',
+        targetId: listingId,
+        reason,
+      },
+    });
+
+    return { message: 'Report submitted. Our team will review it shortly.' };
+  }
+
   async uploadListingImages(
     userId: string,
     listingId: string,

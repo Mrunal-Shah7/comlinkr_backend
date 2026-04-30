@@ -53,6 +53,7 @@ export class StoriesService {
       mediaUrl: story.mediaUrl,
       viewsCount: story.viewsCount,
       commentCount: story.commentCount ?? 0,
+      likeCount: story.likeCount ?? 0,
       expiresAt: story.expiresAt,
       createdAt: story.createdAt,
       isExpired,
@@ -444,6 +445,67 @@ export class StoriesService {
     });
 
     return { deleted: true as const };
+  }
+
+  async toggleStoryLike(userId: string, storyId: string) {
+    const story = await this.prisma.story.findUnique({
+      where: { id: storyId },
+      select: { id: true, expiresAt: true, likeCount: true },
+    });
+    if (!story || story.expiresAt < new Date()) {
+      throw new NotFoundException('This story has expired or does not exist.');
+    }
+
+    const existing = await this.prisma.storyLike.findUnique({
+      where: { userId_storyId: { userId, storyId } },
+      select: { id: true },
+    });
+
+    if (existing) {
+      const updated = await this.prisma.$transaction(async (tx) => {
+        await tx.storyLike.delete({ where: { id: existing.id } });
+        if (story.likeCount > 0) {
+          return tx.story.update({
+            where: { id: storyId },
+            data: { likeCount: { decrement: 1 } },
+            select: { likeCount: true },
+          });
+        }
+        return tx.story.findUniqueOrThrow({
+          where: { id: storyId },
+          select: { likeCount: true },
+        });
+      });
+      return { liked: false as const, likeCount: updated.likeCount };
+    }
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      await tx.storyLike.create({ data: { storyId, userId } });
+      return tx.story.update({
+        where: { id: storyId },
+        data: { likeCount: { increment: 1 } },
+        select: { likeCount: true },
+      });
+    });
+    return { liked: true as const, likeCount: updated.likeCount };
+  }
+
+  async getStoryLikeStatus(userId: string, storyId: string) {
+    const story = await this.prisma.story.findUnique({
+      where: { id: storyId },
+      select: { id: true, likeCount: true },
+    });
+    if (!story) {
+      throw new NotFoundException({ code: 'RESOURCE_NOT_FOUND', message: 'Story not found' });
+    }
+    const [, likedByMe] = await Promise.all([
+      Promise.resolve(story.likeCount),
+      this.prisma.storyLike.findUnique({
+        where: { userId_storyId: { userId, storyId } },
+        select: { id: true },
+      }),
+    ]);
+    return { likeCount: story.likeCount, likedByMe: !!likedByMe };
   }
 
   /** Author-only: remove story and media before expiry (DB cascade drops comments & saves). */

@@ -113,6 +113,26 @@ export class StoriesController {
     return this.storiesService.deleteStoryComment(userId, id, commentId);
   }
 
+  @Post(':id/like')
+  @ApiOperation({ summary: 'Toggle like on a story' })
+  @ApiResponse({ status: 200, description: 'Like toggled' })
+  async toggleLike(
+    @CurrentUser('id') userId: string,
+    @Param('id') id: string,
+  ) {
+    return this.storiesService.toggleStoryLike(userId, id);
+  }
+
+  @Get(':id/like')
+  @ApiOperation({ summary: 'Get story like count + liked-by-me state' })
+  @ApiResponse({ status: 200, description: 'Like status' })
+  async getLikeStatus(
+    @CurrentUser('id') userId: string,
+    @Param('id') id: string,
+  ) {
+    return this.storiesService.getStoryLikeStatus(userId, id);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'View a story (increments view count)' })
   @ApiResponse({ status: 200, description: 'Story detail' })

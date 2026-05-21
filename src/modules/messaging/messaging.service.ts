@@ -20,6 +20,7 @@ import { sanitizeInput } from '../../common/utils/sanitize';
 const MESSAGE_PAGE_LIMIT = 30;
 const IMAGE_MIME_TYPES = ['image/jpeg', 'image/png', 'image/gif'];
 const IMAGE_MAX_SIZE_BYTES = 5 * 1024 * 1024; // 5MB
+const DELETED_LISTING_LABEL = 'Listing no longer available';
 
 export interface ConversationMemberResponse {
   id: string;
@@ -109,15 +110,39 @@ export class MessagingService {
     return g ? g.isUserOnline(userId) : false;
   }
 
-  private contextLabel(contextType: string): string | null {
+  private contextLabel(
+    contextType: string,
+    contextId: string | null,
+    listingTitleMap: Map<string, string>,
+  ): string | null {
     switch (contextType) {
       case 'LISTING':
-        return 'Listings';
+        if (contextId === null) return null;
+        if (listingTitleMap.has(contextId)) return listingTitleMap.get(contextId)!;
+        return DELETED_LISTING_LABEL;
       case 'EVENT':
         return 'Events';
       default:
         return null;
     }
+  }
+
+  private async buildListingTitleMapForOne(
+    contextType: string,
+    contextId: string | null,
+  ): Promise<Map<string, string>> {
+    const map = new Map<string, string>();
+    if (contextType !== 'LISTING' || contextId === null) {
+      return map;
+    }
+    const listing = await this.prisma.housingListing.findUnique({
+      where: { id: contextId },
+      select: { id: true, title: true },
+    });
+    if (listing) {
+      map.set(listing.id, listing.title);
+    }
+    return map;
   }
 
   /** True 1:1 direct threads only (both users present; no third member). */
@@ -223,7 +248,11 @@ export class MessagingService {
         ...(myMember?.lastReadAt ? { createdAt: { gt: myMember.lastReadAt } } : {}),
       },
     });
-    return this.formatConversation(conv as any, userId, unreadCount);
+    const listingTitleMap = await this.buildListingTitleMapForOne(
+      conv.contextType as string,
+      (conv.contextId as string | null) ?? null,
+    );
+    return this.formatConversation(conv as any, userId, unreadCount, listingTitleMap);
   }
 
   async formatConversation(
@@ -253,6 +282,7 @@ export class MessagingService {
     },
     currentUserId: string,
     unreadCount: number,
+    listingTitleMap: Map<string, string> = new Map(),
   ): Promise<ConversationResponse> {
     const memberResponses: ConversationMemberResponse[] = await Promise.all(
       raw.members.map(async (m) => ({
@@ -303,7 +333,7 @@ export class MessagingService {
       otherUser,
       lastMessage,
       unreadCount,
-      contextLabel: this.contextLabel(raw.contextType),
+      contextLabel: this.contextLabel(raw.contextType, raw.contextId, listingTitleMap),
     };
   }
 
@@ -398,6 +428,23 @@ export class MessagingService {
       });
     }
 
+    const listingIds = new Set<string>();
+    for (const conv of filtered) {
+      if (conv.contextType === 'LISTING' && conv.contextId !== null) {
+        listingIds.add(conv.contextId);
+      }
+    }
+    const listingTitleMap = new Map<string, string>();
+    if (listingIds.size > 0) {
+      const listings = await this.prisma.housingListing.findMany({
+        where: { id: { in: [...listingIds] } },
+        select: { id: true, title: true },
+      });
+      for (const listing of listings) {
+        listingTitleMap.set(listing.id, listing.title);
+      }
+    }
+
     const result: ConversationResponse[] = [];
     for (const conv of filtered) {
       const myMember = conv.members.find((m) => m.userId === userId);
@@ -409,7 +456,7 @@ export class MessagingService {
           senderId: { not: userId },
         },
       });
-      result.push(await this.formatConversation(conv as any, userId, unreadCount));
+      result.push(await this.formatConversation(conv as any, userId, unreadCount, listingTitleMap));
     }
     return result;
   }
@@ -459,7 +506,8 @@ export class MessagingService {
         senderId: { not: userId },
       },
     });
-    return this.formatConversation(conv as any, userId, unreadCount);
+    const listingTitleMap = await this.buildListingTitleMapForOne(conv.contextType, conv.contextId);
+    return this.formatConversation(conv as any, userId, unreadCount, listingTitleMap);
   }
 
   async createConversation(userId: string, dto: CreateConversationDto): Promise<ConversationResponse> {
@@ -513,17 +561,19 @@ export class MessagingService {
             ],
           },
         },
-        include: {
-          members: {
-            include: {
-              user: {
-                select: { id: true, username: true, fullName: true, avatarUrl: true },
-              },
-            },
-          },
-        },
       });
-      return this.formatConversation({ ...created, messages: [] } as any, userId, 0);
+      const fullConv = await this.prisma.conversation.findUnique({
+        where: { id: created.id },
+        include: this.directConversationInclude(),
+      });
+      if (!fullConv) {
+        throw new NotFoundException('Conversation not found');
+      }
+      const listingTitleMap = await this.buildListingTitleMapForOne(
+        fullConv.contextType,
+        fullConv.contextId,
+      );
+      return this.formatConversation(fullConv as any, userId, 0, listingTitleMap);
     } catch (e) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
         const again = await this.findExistingDirectConversation(

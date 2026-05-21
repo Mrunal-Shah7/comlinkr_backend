@@ -8,7 +8,7 @@ import {
   WebSocketServer,
 } from '@nestjs/websockets';
 import { ConfigService } from '@nestjs/config';
-import { Server } from 'socket.io';
+import { Namespace, Server } from 'socket.io';
 import session from 'express-session';
 import { RedisService } from '../../redis/redis.service';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -114,6 +114,11 @@ export class MessagingGateway
     return this.userSockets.get(userId) ?? new Set();
   }
 
+  /** Namespaced gateway: `server` is a Namespace; `sockets` is the connected-socket map (Socket.IO v4). */
+  private getSocketById(socketId: string) {
+    return (this.server as unknown as Namespace).sockets.get(socketId);
+  }
+
   emitNewMessage(conversationId: string, message: MessageResponse): void {
     this.server.to(conversationId).emit('new_message', { conversationId, message });
   }
@@ -123,7 +128,7 @@ export class MessagingGateway
     if (!member || member.status === 'BLOCKED') {
       return { ok: false, error: 'Not a member of this conversation' };
     }
-    const socket = this.server.sockets.sockets.get(socketId);
+    const socket = this.getSocketById(socketId);
     if (socket) {
       socket.join(conversationId);
     }
@@ -131,7 +136,7 @@ export class MessagingGateway
   }
 
   leaveConversation(socketId: string, conversationId: string): void {
-    const socket = this.server.sockets.sockets.get(socketId);
+    const socket = this.getSocketById(socketId);
     if (socket) {
       socket.leave(conversationId);
     }

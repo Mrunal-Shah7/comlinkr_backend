@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEnum, IsNotEmpty, IsOptional, IsUUID } from 'class-validator';
+import { IsEnum, IsNotEmpty, IsOptional, IsString, IsUUID, MaxLength } from 'class-validator';
 import { ConversationContextType } from '@prisma/client';
 
 export class CreateConversationDto {
@@ -17,4 +17,11 @@ export class CreateConversationDto {
   @IsOptional()
   @IsUUID()
   contextId?: string;
+
+  /** Accepted for client compatibility; DIRECT threads use contextLabel, not title. */
+  @ApiPropertyOptional({ description: 'Ignored for DIRECT; optional display hint from client' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  title?: string;
 }

@@ -91,6 +91,15 @@ export class SharedSpacesService {
       availableSpots: space.availableSpots,
       petPolicy: space.petPolicy,
       smoking: space.smoking,
+      sleepSchedule: space.sleepSchedule ?? null, // SPRINT-28
+      noiseTolerance: space.noiseTolerance ?? null, // SPRINT-28
+      roomType: space.roomType ?? null, // SPRINT-28
+      furnishedStatus: space.furnishedStatus ?? null, // SPRINT-28
+      availableFrom: space.availableFrom?.toISOString() ?? null, // SPRINT-28
+      cleanliness: space.cleanliness ?? null, // SPRINT-28
+      guestPolicy: space.guestPolicy ?? null, // SPRINT-28
+      leaseTerm: space.leaseTerm ?? null, // SPRINT-28
+      genderPreference: space.genderPreference ?? null, // SPRINT-28
       amenities: space.amenities,
       houseRules: space.houseRules,
       isVerified: space.isVerified,
@@ -235,6 +244,15 @@ export class SharedSpacesService {
         availableSpots: dto.availableSpots,
         petPolicy: dto.petPolicy ?? null,
         smoking: dto.smoking ?? false,
+        sleepSchedule: dto.sleepSchedule, // SPRINT-28
+        noiseTolerance: dto.noiseTolerance, // SPRINT-28
+        roomType: dto.roomType, // SPRINT-28
+        furnishedStatus: dto.furnishedStatus, // SPRINT-28
+        availableFrom: dto.availableFrom ?? null, // SPRINT-28
+        cleanliness: dto.cleanliness ?? null, // SPRINT-28
+        guestPolicy: dto.guestPolicy ?? null, // SPRINT-28
+        leaseTerm: dto.leaseTerm ?? null, // SPRINT-28
+        genderPreference: dto.genderPreference ?? null, // SPRINT-28
         amenities: dto.amenities ?? [],
         houseRules: dto.houseRules ?? [],
       },

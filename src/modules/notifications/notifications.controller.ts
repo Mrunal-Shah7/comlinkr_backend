@@ -13,7 +13,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { NotificationsService } from './notifications.service';
 import { UpdateNotificationPreferencesDto } from './dto/update-preferences.dto';
-import { RegisterPushTokenDto } from './dto/register-push-token.dto';
+import { NotificationRegisterPushTokenDto } from './dto/register-push-token.dto';
 
 @ApiTags('Notifications')
 @Controller('notifications')
@@ -51,7 +51,7 @@ export class NotificationsController {
   @Post('push-token')
   registerPushToken(
     @CurrentUser('id') userId: string,
-    @Body() dto: RegisterPushTokenDto,
+    @Body() dto: NotificationRegisterPushTokenDto,
   ) {
     return this.notificationsService.registerPushToken(
       userId,

@@ -11,6 +11,13 @@ export interface RssNewsArticle {
   category: string;
 }
 
+const STATE_NEWS_PHRASINGS = [ // SPRINT-30
+  '{state} news today',
+  '{state} latest headlines',
+  '{state} breaking news',
+  '{state} top stories',
+];
+
 const LOCAL_NEWS_PHRASINGS = [
   '{city} news',
   '{city} latest news',
@@ -102,6 +109,31 @@ export function buildNationalNewsQuery(
 ): string {
   const phrase = phraseAt(NATIONAL_NEWS_PHRASINGS, rotationIndex).replace('{country}', countryName);
   return `${phrase} ${timeBucket}`;
+}
+
+// SPRINT-30: state-level RSS query for local news fallback
+export function buildStateNewsQuery(
+  stateName: string,
+  rotationIndex: number,
+  timeBucket: string,
+): string {
+  const phrase = phraseAt(STATE_NEWS_PHRASINGS, rotationIndex).replace('{state}', stateName);
+  return `${phrase} ${timeBucket}`;
+}
+
+export async function fetchStateNews(
+  state: string,
+  timeBucket: string,
+  rotationIndex: number,
+  gl: string = 'US',
+  hl: string = 'en-US',
+): Promise<RssNewsArticle[]> {
+  try {
+    const query = buildStateNewsQuery(state, rotationIndex, timeBucket);
+    return await fetchGoogleNewsRSS(query, gl, hl, 'local');
+  } catch {
+    return [];
+  }
 }
 
 function hash32(s: string): string {

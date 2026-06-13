@@ -8,5 +8,6 @@ import { FoodService } from './food.service';
   imports: [PrismaModule, MessagingModule],
   controllers: [FoodController],
   providers: [FoodService],
+  exports: [FoodService], // SPRINT-29: for UsersController getMyReservations
 })
 export class FoodModule {}

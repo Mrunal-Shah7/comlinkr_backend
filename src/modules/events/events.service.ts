@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { randomUUID } from 'crypto';
+import * as QRCode from 'qrcode'; // SPRINT-28
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
@@ -1019,6 +1020,21 @@ export class EventsService {
       where: { id: userId },
       select: { fullName: true, email: true },
     });
+    const attendee = event.attendees[0];
+    // SPRINT-28: generate real base64 PNG QR from ticket payload
+    let qrCode: string | null = null;
+    try {
+      const payload = JSON.stringify({
+        eventId: event.id,
+        attendeeId: attendee.id,
+        userId,
+        eventTitle: event.title,
+      });
+      const dataUrl = await QRCode.toDataURL(payload);
+      qrCode = dataUrl.split(',')[1] ?? null;
+    } catch {
+      qrCode = null;
+    }
     return {
       id: `ticket_${eventId}_${userId}`,
       eventId: event.id,
@@ -1029,10 +1045,10 @@ export class EventsService {
       location: event.venue,
       attendeeName: user?.fullName ?? 'Guest',
       attendeeEmail: user?.email ?? '',
-      quantity: Math.max(1, event.attendees[0].ticketCount ?? 1),
+      quantity: Math.max(1, attendee.ticketCount ?? 1),
       totalPrice: Number(event.ticketPrice ?? 0),
-      qrCode: '',
-      issuedAt: event.attendees[0].joinedAt.toISOString(),
+      qrCode,
+      issuedAt: attendee.joinedAt.toISOString(),
     };
   }
 }

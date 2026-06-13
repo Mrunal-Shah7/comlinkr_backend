@@ -50,9 +50,9 @@ type UserWithRelations = {
   fullName: string;
   avatarUrl: string | null;
   bio: string | null;
-  vibes: Array<{ id: string; name: string; emoji: string }>;
+  vibes: Array<{ id: string; slug: string; name: string; emoji: string }>; // SPRINT-28: slug for card response
   interests: Array<{ id: string; name: string; icon: string }>;
-  communities: Array<{ id: string; name: string; emoji: string }>;
+  communities: Array<{ id: string; slug: string; name: string; emoji: string }>; // SPRINT-28: slug for card response
   location: { city: string; state: string; country: string } | null;
   roommatePreferences: {
     budgetMin: number | null;
@@ -335,6 +335,8 @@ export class RoommatesService {
       bio: user.bio,
       city: user.location?.city ?? null,
       compatibilityScore,
+      vibes: (user.vibes ?? []).map((v) => ({ slug: v.slug, name: v.name, emoji: v.emoji })), // SPRINT-28
+      communities: (user.communities ?? []).map((c) => ({ slug: c.slug, name: c.name, emoji: c.emoji })), // SPRINT-28
       preferences: prefs
         ? {
             budgetMin: prefs.budgetMin,
@@ -367,9 +369,9 @@ export class RoommatesService {
     const currentUser = await this.prisma.user.findUnique({
       where: { id: userId },
       include: {
-        vibes: { select: { id: true, name: true, emoji: true } },
+        vibes: { select: { id: true, slug: true, name: true, emoji: true } }, // SPRINT-28: slug
         interests: { select: { id: true, name: true, icon: true } },
-        communities: { select: { id: true, name: true, emoji: true } },
+        communities: { select: { id: true, slug: true, name: true, emoji: true } }, // SPRINT-28: slug
         location: { select: { city: true, state: true, country: true } },
         roommatePreferences: true,
         userBadges: { select: { badgeType: true } },
@@ -405,9 +407,9 @@ export class RoommatesService {
     const users = await this.prisma.user.findMany({
       where,
       include: {
-        vibes: { select: { id: true, name: true, emoji: true } },
+        vibes: { select: { id: true, slug: true, name: true, emoji: true } }, // SPRINT-28: slug
         interests: { select: { id: true, name: true, icon: true } },
-        communities: { select: { id: true, name: true, emoji: true } },
+        communities: { select: { id: true, slug: true, name: true, emoji: true } }, // SPRINT-28: slug
         location: { select: { city: true, state: true, country: true } },
         roommatePreferences: true,
         userBadges: { select: { badgeType: true } },
@@ -489,9 +491,9 @@ export class RoommatesService {
       this.prisma.user.findUnique({
         where: { id: roommateId },
         include: {
-          vibes: { select: { id: true, name: true, emoji: true } },
+          vibes: { select: { id: true, slug: true, name: true, emoji: true } }, // SPRINT-28: slug
           interests: { select: { id: true, name: true, icon: true } },
-          communities: { select: { id: true, name: true, emoji: true } },
+          communities: { select: { id: true, slug: true, name: true, emoji: true } }, // SPRINT-28: slug
           location: { select: { city: true, state: true, country: true } },
           roommatePreferences: true,
           userBadges: { select: { badgeType: true } },
@@ -515,9 +517,9 @@ export class RoommatesService {
     const currentUser = await this.prisma.user.findUnique({
       where: { id: userId },
       include: {
-        vibes: { select: { id: true, name: true, emoji: true } },
+        vibes: { select: { id: true, slug: true, name: true, emoji: true } }, // SPRINT-28: slug
         interests: { select: { id: true, name: true, icon: true } },
-        communities: { select: { id: true, name: true, emoji: true } },
+        communities: { select: { id: true, slug: true, name: true, emoji: true } }, // SPRINT-28: slug
         location: { select: { city: true, state: true, country: true } },
         roommatePreferences: true,
         userBadges: { select: { badgeType: true } },
@@ -977,9 +979,9 @@ export class RoommatesService {
     const currentUser = await this.prisma.user.findUnique({
       where: { id: userId },
       include: {
-        vibes: { select: { id: true, name: true, emoji: true } },
+        vibes: { select: { id: true, slug: true, name: true, emoji: true } }, // SPRINT-28: slug
         interests: { select: { id: true, name: true, icon: true } },
-        communities: { select: { id: true, name: true, emoji: true } },
+        communities: { select: { id: true, slug: true, name: true, emoji: true } }, // SPRINT-28: slug
         location: { select: { city: true, state: true, country: true } },
         roommatePreferences: true,
         userBadges: { select: { badgeType: true } },
@@ -1002,9 +1004,9 @@ export class RoommatesService {
             include: {
               location: { select: { city: true, state: true, country: true } },
               roommatePreferences: true,
-              vibes: { select: { id: true, name: true, emoji: true } },
+              vibes: { select: { id: true, slug: true, name: true, emoji: true } }, // SPRINT-28: slug
               interests: { select: { id: true, name: true, icon: true } },
-              communities: { select: { id: true, name: true, emoji: true } },
+              communities: { select: { id: true, slug: true, name: true, emoji: true } }, // SPRINT-28: slug
               userBadges: { select: { badgeType: true } },
             },
           },

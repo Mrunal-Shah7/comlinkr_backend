@@ -4,6 +4,8 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   Patch,
   Post,
@@ -28,7 +30,7 @@ import { RestaurantQueryDto } from './dto/restaurant-query.dto';
 import { CreateReviewDto } from './dto/create-review.dto';
 import { UpdateReviewDto } from './dto/update-review.dto';
 import { CreateReservationDto } from './dto/create-reservation.dto';
-import { ReportReasonDto } from './dto/report-reason.dto';
+import { FoodReportReasonDto } from './dto/report-reason.dto';
 
 const RESTAURANT_IMAGE_MAX_SIZE = 5 * 1024 * 1024;
 
@@ -91,6 +93,25 @@ export class FoodController {
     return this.foodService.getSavedRestaurants(userId, query);
   }
 
+  // SPRINT-29: reservation management — literal `reservations` segment before `:id` routes
+  @Patch('reservations/:reservationId/cancel')
+  @ApiOperation({ summary: 'Cancel a reservation (reserver or restaurant owner)' })
+  async cancelReservation(
+    @CurrentUser('id') userId: string,
+    @Param('reservationId') reservationId: string,
+  ) {
+    return this.foodService.cancelReservation(userId, reservationId);
+  }
+
+  @Patch('reservations/:reservationId/confirm')
+  @ApiOperation({ summary: 'Confirm a pending reservation (owner only)' })
+  async confirmReservation(
+    @CurrentUser('id') userId: string,
+    @Param('reservationId') reservationId: string,
+  ) {
+    return this.foodService.confirmReservation(userId, reservationId);
+  }
+
   @Get(':id/reviews')
   @ApiOperation({ summary: 'Get paginated reviews for a restaurant' })
   @ApiQuery({ name: 'page', required: false })
@@ -126,6 +147,29 @@ export class FoodController {
     @Param('id') restaurantId: string,
   ) {
     return this.foodService.deleteReview(userId, restaurantId);
+  }
+
+  // SPRINT-29: per-restaurant reservations
+  @Post(':id/reservations')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: 'Create a reservation at a restaurant' })
+  async createReservation(
+    @CurrentUser('id') userId: string,
+    @Param('id') restaurantId: string,
+    @Body() dto: CreateReservationDto,
+  ) {
+    return this.foodService.createReservation(userId, restaurantId, dto);
+  }
+
+  @Get(':id/reservations')
+  @ApiOperation({ summary: 'List reservations for a restaurant (owner only)' })
+  @ApiQuery({ name: 'status', required: false, enum: ['PENDING', 'CONFIRMED', 'CANCELLED'] })
+  async getRestaurantReservations(
+    @CurrentUser('id') userId: string,
+    @Param('id') restaurantId: string,
+    @Query('status') status?: string,
+  ) {
+    return this.foodService.getRestaurantReservations(userId, restaurantId, status);
   }
 
   @Get(':id')
@@ -273,7 +317,7 @@ export class FoodController {
   async reportRestaurant(
     @CurrentUser('id') userId: string,
     @Param('id') id: string,
-    @Body() dto: ReportReasonDto,
+    @Body() dto: FoodReportReasonDto,
   ) {
     return this.foodService.reportRestaurant(userId, id, dto.reason);
   }

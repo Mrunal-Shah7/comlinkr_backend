@@ -17,6 +17,8 @@ import { UpdateReviewDto } from './dto/update-review.dto';
 import { CreateReservationDto } from './dto/create-reservation.dto';
 import { PaginationDto, createPaginationMeta } from '../../common/dto/pagination.dto';
 import { MessagingService } from '../messaging/messaging.service';
+import { NotificationsService } from '../notifications/notifications.service'; // SPRINT-29
+import { ReservationStatus } from '@prisma/client'; // SPRINT-29
 
 const RESTAURANT_IMAGE_MAX = 6;
 const RESTAURANT_IMAGE_MAX_SIZE = 5 * 1024 * 1024;
@@ -29,6 +31,7 @@ export class FoodService {
     private readonly prisma: PrismaService,
     private readonly storageService: StorageService,
     private readonly messagingService: MessagingService,
+    private readonly notificationsService: NotificationsService, // SPRINT-29
   ) {}
 
   /**
@@ -789,14 +792,83 @@ export class FoodService {
     return { deleted: true };
   }
 
-  async makeReservation(
+  /** SPRINT-29: shared reservation response shape */
+  private formatReservation(
+    reservation: {
+      id: string;
+      restaurantId: string;
+      userId: string;
+      date: Date;
+      time: string;
+      partySize: number;
+      note: string | null;
+      status: ReservationStatus;
+      createdAt: Date;
+      restaurant: {
+        id: string;
+        name: string;
+        city?: string;
+        cuisine?: string;
+        images?: Array<{ imageUrl: string }>;
+      };
+      user: {
+        id: string;
+        username: string;
+        fullName: string;
+        avatarUrl: string | null;
+      };
+    },
+  ) {
+    const firstImage = reservation.restaurant.images?.[0]?.imageUrl;
+    return {
+      id: reservation.id,
+      restaurantId: reservation.restaurantId,
+      restaurantName: reservation.restaurant.name,
+      userId: reservation.userId,
+      user: {
+        id: reservation.user.id,
+        username: reservation.user.username,
+        name: reservation.user.fullName,
+        avatarUrl: reservation.user.avatarUrl
+          ? this.buildFileUrl(reservation.user.avatarUrl)
+          : null,
+      },
+      date: reservation.date.toISOString(),
+      time: reservation.time,
+      partySize: reservation.partySize,
+      note: reservation.note ?? null,
+      status: reservation.status,
+      createdAt: reservation.createdAt.toISOString(),
+      restaurantCity: reservation.restaurant.city ?? null,
+      restaurantCuisine: reservation.restaurant.cuisine ?? null,
+      imageUrl: firstImage ? this.buildFileUrl(firstImage) : null,
+    };
+  }
+
+  private reservationInclude = {
+    restaurant: {
+      select: {
+        id: true,
+        name: true,
+        city: true,
+        cuisine: true,
+        ownerId: true,
+        images: { orderBy: { order: 'asc' as const }, take: 1, select: { imageUrl: true } },
+      },
+    },
+    user: {
+      select: { id: true, username: true, fullName: true, avatarUrl: true },
+    },
+  };
+
+  async createReservation(
     userId: string,
     restaurantId: string,
     dto: CreateReservationDto,
   ) {
     const restaurant = await this.prisma.restaurant.findUnique({
       where: { id: restaurantId },
-      select: { id: true, name: true, address: true, city: true },
+      select: { id: true, name: true, ownerId: true },
     });
     if (!restaurant) {
       throw new NotFoundException({
@@ -814,31 +886,164 @@ export class FoodService {
         message: 'Reservation date must be in the future',
       });
     }
-    const reservation = await this.prisma.restaurantReservation.create({
+    const created = await this.prisma.restaurantReservation.create({
       data: {
         restaurantId,
         userId,
         date: reservationDate,
         time: dto.time,
         partySize: dto.partySize,
+        note: dto.note ?? null, // SPRINT-29
       },
-      include: { restaurant: { select: { id: true, name: true, address: true, city: true } } },
     });
-    return {
-      id: reservation.id,
-      restaurantId: reservation.restaurantId,
-      date: reservation.date,
-      time: reservation.time,
-      partySize: reservation.partySize,
-      status: reservation.status,
-      createdAt: reservation.createdAt,
-      restaurant: {
-        id: reservation.restaurant.id,
-        name: reservation.restaurant.name,
-        address: reservation.restaurant.address,
-        city: reservation.restaurant.city,
-      },
+    const reserver = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { username: true },
+    });
+    await this.notificationsService.createNotification({
+      userId: restaurant.ownerId,
+      type: 'SYSTEM',
+      title: 'New Reservation Request',
+      body: `${reserver?.username ?? 'Someone'} requested a table for ${dto.partySize} on ${dto.date} at ${dto.time}.`,
+      referenceType: 'RESTAURANT_RESERVATION',
+      referenceId: created.id,
+      actorId: userId,
+    });
+    const full = await this.prisma.restaurantReservation.findUnique({
+      where: { id: created.id },
+      include: this.reservationInclude,
+    });
+    return this.formatReservation(full!);
+  }
+
+  /** @deprecated alias — use createReservation (SPRINT-29) */
+  async makeReservation(
+    userId: string,
+    restaurantId: string,
+    dto: CreateReservationDto,
+  ) {
+    return this.createReservation(userId, restaurantId, dto);
+  }
+
+  async getRestaurantReservations(
+    userId: string,
+    restaurantId: string,
+    statusFilter?: string,
+  ) {
+    const restaurant = await this.prisma.restaurant.findUnique({
+      where: { id: restaurantId },
+      select: { id: true, ownerId: true },
+    });
+    if (!restaurant) {
+      throw new NotFoundException({
+        code: 'RESOURCE_NOT_FOUND',
+        message: 'Restaurant not found',
+      });
+    }
+    if (restaurant.ownerId !== userId) {
+      throw new ForbiddenException({
+        code: 'FORBIDDEN',
+        message: 'Only the restaurant owner can view reservations',
+      });
+    }
+    const where: { restaurantId: string; status?: ReservationStatus } = {
+      restaurantId,
     };
+    const validStatuses: ReservationStatus[] = ['PENDING', 'CONFIRMED', 'CANCELLED'];
+    if (statusFilter && validStatuses.includes(statusFilter as ReservationStatus)) {
+      where.status = statusFilter as ReservationStatus;
+    }
+    const rows = await this.prisma.restaurantReservation.findMany({
+      where,
+      orderBy: { date: 'asc' },
+      include: this.reservationInclude,
+    });
+    return rows.map((r) => this.formatReservation(r));
+  }
+
+  async getMyReservations(userId: string) {
+    const rows = await this.prisma.restaurantReservation.findMany({
+      where: { userId },
+      orderBy: { date: 'desc' },
+      include: this.reservationInclude,
+    });
+    return rows.map((r) => this.formatReservation(r));
+  }
+
+  async cancelReservation(userId: string, reservationId: string) {
+    const reservation = await this.prisma.restaurantReservation.findUnique({
+      where: { id: reservationId },
+      include: {
+        restaurant: { select: { ownerId: true, id: true, name: true, city: true, cuisine: true, images: { orderBy: { order: 'asc' }, take: 1, select: { imageUrl: true } } } },
+        user: { select: { id: true, username: true, fullName: true, avatarUrl: true } },
+      },
+    });
+    if (!reservation) {
+      throw new NotFoundException({
+        code: 'RESOURCE_NOT_FOUND',
+        message: 'Reservation not found',
+      });
+    }
+    if (reservation.status === 'CANCELLED') {
+      throw new BadRequestException('Reservation is already cancelled');
+    }
+    const isReserver = reservation.userId === userId;
+    const isOwner = reservation.restaurant.ownerId === userId;
+    const canCancel =
+      (isReserver || isOwner) &&
+      (reservation.status === 'PENDING' || reservation.status === 'CONFIRMED');
+    if (!canCancel) {
+      throw new ForbiddenException({
+        code: 'FORBIDDEN',
+        message: 'You cannot cancel this reservation',
+      });
+    }
+    const updated = await this.prisma.restaurantReservation.update({
+      where: { id: reservationId },
+      data: { status: 'CANCELLED' },
+      include: this.reservationInclude,
+    });
+    return this.formatReservation(updated);
+  }
+
+  async confirmReservation(userId: string, reservationId: string) {
+    const reservation = await this.prisma.restaurantReservation.findUnique({
+      where: { id: reservationId },
+      include: {
+        restaurant: { select: { ownerId: true, name: true, id: true, city: true, cuisine: true, images: { orderBy: { order: 'asc' }, take: 1, select: { imageUrl: true } } } },
+        user: { select: { id: true, username: true, fullName: true, avatarUrl: true } },
+      },
+    });
+    if (!reservation) {
+      throw new NotFoundException({
+        code: 'RESOURCE_NOT_FOUND',
+        message: 'Reservation not found',
+      });
+    }
+    if (reservation.restaurant.ownerId !== userId) {
+      throw new ForbiddenException({
+        code: 'FORBIDDEN',
+        message: 'Only the restaurant owner can confirm reservations',
+      });
+    }
+    if (reservation.status !== 'PENDING') {
+      throw new BadRequestException('Only pending reservations can be confirmed');
+    }
+    const updated = await this.prisma.restaurantReservation.update({
+      where: { id: reservationId },
+      data: { status: 'CONFIRMED' },
+      include: this.reservationInclude,
+    });
+    await this.notificationsService.createNotification({
+      userId: reservation.userId,
+      type: 'SYSTEM',
+      title: 'Reservation Confirmed',
+      body: `Your reservation at ${reservation.restaurant.name} on ${reservation.date.toISOString().slice(0, 10)} at ${reservation.time} has been confirmed.`,
+      referenceType: 'RESTAURANT_RESERVATION',
+      referenceId: reservationId,
+      actorId: userId,
+    });
+    return this.formatReservation(updated);
   }
 
   async toggleFavorite(userId: string, restaurantId: string) {

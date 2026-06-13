@@ -15,6 +15,12 @@ export class NewsExploreQueryDto {
   @MaxLength(120)
   country?: string;
 
+  @ApiPropertyOptional({ example: 'Alabama', description: 'State/region for local news fallback' }) // SPRINT-30
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  state?: string;
+
   @ApiPropertyOptional({ enum: ['primary', 'full'], default: 'full' })
   @IsOptional()
   @IsString()

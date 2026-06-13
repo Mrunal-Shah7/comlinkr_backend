@@ -1,7 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { IsIn, IsNotEmpty, IsString, MaxLength } from 'class-validator';
 
-export class RegisterPushTokenDto {
+export class NotificationRegisterPushTokenDto {
   @ApiProperty({ maxLength: 512 })
   @IsString()
   @IsNotEmpty()

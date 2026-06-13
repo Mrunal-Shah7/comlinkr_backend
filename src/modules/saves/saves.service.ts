@@ -346,7 +346,7 @@ export class SavesService {
         stories,
         roommates,
       ] = await Promise.all([
-        this.prisma.feedSave.count({ where: { userId } }),
+        this.prisma.newsArticleSave.count({ where: { userId } }), // SPRINT-30: live news article saves
         this.prisma.eventSave.count({ where: { userId } }),
         this.prisma.housingSave.count({ where: { userId } }),
         this.prisma.restaurantSave.count({ where: { userId } }),

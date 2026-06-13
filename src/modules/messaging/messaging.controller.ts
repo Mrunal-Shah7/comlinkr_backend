@@ -1,7 +1,10 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   Patch,
   Post,
@@ -44,6 +47,16 @@ export class MessagingController {
     @Body() dto: CreateConversationDto,
   ) {
     return this.messagingService.createConversation(userId, dto);
+  }
+
+  // SPRINT-27: soft-hide — DELETE /:id (distinct from GET /:id/messages, PATCH /:id/read by method + suffix)
+  @Delete(':id')
+  @HttpCode(HttpStatus.OK)
+  async hideConversation(
+    @CurrentUser('id') userId: string,
+    @Param('id') conversationId: string,
+  ) {
+    return this.messagingService.hideConversation(userId, conversationId);
   }
 
   @Get(':id')

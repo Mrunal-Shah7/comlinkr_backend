@@ -45,6 +45,19 @@ enum NoiseTolerance {
   SOCIAL
 }
 
+enum RoomType { // SPRINT-28
+  PRIVATE_ROOM
+  SHARED_ROOM
+  STUDIO
+  EN_SUITE
+}
+
+enum FurnishedStatus { // SPRINT-28
+  FULLY_FURNISHED
+  PARTIALLY_FURNISHED
+  UNFURNISHED
+}
+
 enum GuestsFrequency {
   NEVER
   OCCASIONALLY
@@ -325,6 +338,7 @@ model User {
   notifications           Notification[]
   newsArticleLikes        NewsArticleLike[]
   newsArticleComments     NewsArticleComment[]
+  newsArticleSaves        NewsArticleSave[] // SPRINT-30
   storyComments           StoryComment[]
   storyLikes              StoryLike[]
   listingReports          ListingReport[]
@@ -616,6 +630,15 @@ model SharedSpace {
   availableSpots   Int
   petPolicy        String?
   smoking          Boolean  @default(false)
+  sleepSchedule    SleepSchedule?   // SPRINT-28
+  noiseTolerance   NoiseTolerance?  // SPRINT-28
+  roomType         RoomType?        // SPRINT-28
+  furnishedStatus  FurnishedStatus? // SPRINT-28
+  availableFrom    DateTime?        // SPRINT-28
+  cleanliness      String?          @db.VarChar(100) // SPRINT-28
+  guestPolicy      String?          @db.VarChar(200) // SPRINT-28
+  leaseTerm        String?          @db.VarChar(100) // SPRINT-28
+  genderPreference String?          @db.VarChar(100) // SPRINT-28
   amenities        String[]
   houseRules       String[]
   isVerified       Boolean  @default(false)
@@ -735,6 +758,7 @@ model RestaurantReservation {
   date         DateTime
   time         String
   partySize    Int
+  note         String?           @db.VarChar(500) // SPRINT-29
   status       ReservationStatus @default(PENDING)
   createdAt    DateTime          @default(now())
 
@@ -898,6 +922,7 @@ model ConversationMember {
   role           ConversationMemberRole  @default(MEMBER)
   status         ConversationMemberStatus @default(PENDING)
   lastReadAt     DateTime?
+  isHidden       Boolean                 @default(false) // SPRINT-27: per-user soft hide from inbox
   joinedAt       DateTime                @default(now())
 
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
@@ -1342,6 +1367,25 @@ model NewsArticleComment {
 
   @@index([articleId, createdAt(sort: Desc)])
   @@index([userId])
+}
+
+// SPRINT-30: saved live news articles (RSS articleId + metadata snapshot)
+model NewsArticleSave {
+  id          String    @id @default(uuid())
+  userId      String
+  articleId   String
+  title       String    @db.VarChar(500)
+  url         String    @db.VarChar(2000)
+  imageUrl    String?   @db.VarChar(2000)
+  source      String?   @db.VarChar(200)
+  publishedAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, articleId])
+  @@index([userId])
+  @@index([articleId])
 }
 
 model NotificationPreference {

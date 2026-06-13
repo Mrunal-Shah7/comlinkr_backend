@@ -3,6 +3,8 @@ import {
   ArrayMaxSize,
   IsArray,
   IsBoolean,
+  IsDateString,
+  IsEnum,
   IsInt,
   IsNumber,
   IsOptional,
@@ -11,6 +13,7 @@ import {
   Min,
   MinLength,
 } from 'class-validator';
+import { FurnishedStatus, NoiseTolerance, RoomType, SleepSchedule } from '@prisma/client'; // SPRINT-28
 
 export class CreateSharedSpaceDto {
   @IsString()
@@ -97,6 +100,47 @@ export class CreateSharedSpaceDto {
   @Type(() => Boolean)
   @IsBoolean()
   smoking?: boolean;
+
+  @IsOptional() // SPRINT-28
+  @IsEnum(SleepSchedule)
+  sleepSchedule?: SleepSchedule;
+
+  @IsOptional() // SPRINT-28
+  @IsEnum(NoiseTolerance)
+  noiseTolerance?: NoiseTolerance;
+
+  @IsOptional() // SPRINT-28
+  @IsEnum(RoomType)
+  roomType?: RoomType;
+
+  @IsOptional() // SPRINT-28
+  @IsEnum(FurnishedStatus)
+  furnishedStatus?: FurnishedStatus;
+
+  @IsOptional() // SPRINT-28
+  @IsDateString()
+  @Type(() => Date)
+  availableFrom?: Date;
+
+  @IsOptional() // SPRINT-28
+  @IsString()
+  @MaxLength(100)
+  cleanliness?: string;
+
+  @IsOptional() // SPRINT-28
+  @IsString()
+  @MaxLength(200)
+  guestPolicy?: string;
+
+  @IsOptional() // SPRINT-28
+  @IsString()
+  @MaxLength(100)
+  leaseTerm?: string;
+
+  @IsOptional() // SPRINT-28
+  @IsString()
+  @MaxLength(100)
+  genderPreference?: string;
 
   @IsOptional()
   @IsArray()

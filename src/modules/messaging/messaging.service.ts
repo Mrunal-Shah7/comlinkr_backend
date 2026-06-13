@@ -371,7 +371,7 @@ export class MessagingService {
     const search = query.search?.trim();
 
     const myMemberships = await this.prisma.conversationMember.findMany({
-      where: { userId, status: { not: 'BLOCKED' } },
+      where: { userId, status: { not: 'BLOCKED' }, isHidden: false }, // SPRINT-27: exclude soft-hidden
       select: { conversationId: true },
     });
     const conversationIds = myMemberships.map((m) => m.conversationId);
@@ -842,6 +842,21 @@ export class MessagingService {
     return this.prisma.conversationMember.findUnique({
       where: { conversationId_userId: { conversationId, userId } },
     });
+  }
+
+  // SPRINT-27: soft-hide conversation for the requesting user only
+  async hideConversation(userId: string, conversationId: string): Promise<{ message: string }> {
+    const member = await this.prisma.conversationMember.findUnique({
+      where: { conversationId_userId: { conversationId, userId } },
+    });
+    if (!member) {
+      throw new NotFoundException('Conversation not found');
+    }
+    await this.prisma.conversationMember.update({
+      where: { conversationId_userId: { conversationId, userId } },
+      data: { isHidden: true },
+    });
+    return { message: 'Conversation removed' };
   }
 }
 

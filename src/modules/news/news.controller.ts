@@ -6,6 +6,7 @@ import { AuthGuard } from '../../common/guards/auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { AddNewsCommentDto } from './dto/add-news-comment.dto';
+import { SaveNewsArticleDto } from './dto/save-news-article.dto'; // SPRINT-30
 
 @ApiTags('News')
 @Controller('news')
@@ -21,15 +22,41 @@ export class NewsController {
   @ApiQuery({ name: 'force', required: false, type: Boolean })
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
   @ApiQuery({ name: 'pageSize', required: false, type: Number, example: 20 })
+  @ApiQuery({ name: 'state', required: false, type: String }) // SPRINT-30
   @ApiResponse({ status: 200, description: 'Deduped articles + cache timestamp' })
   async explore(@Query() query: NewsExploreQueryDto) {
     const page = query.page ?? 1;
     const pageSize = query.pageSize ?? 20;
     const force = query.force === true;
+    const state = query.state; // SPRINT-30
     if (query.phase === 'primary') {
-      return this.newsService.getExploreFeedPrimary(query.city ?? '', query.country ?? '', page, pageSize, force);
+      return this.newsService.getExploreFeedPrimary(
+        query.city ?? '',
+        query.country ?? '',
+        page,
+        pageSize,
+        force,
+        state,
+      );
     }
-    return this.newsService.getExploreFeed(query.city ?? '', query.country ?? '', page, pageSize, force);
+    return this.newsService.getExploreFeed(
+      query.city ?? '',
+      query.country ?? '',
+      page,
+      pageSize,
+      force,
+      state,
+    );
+  }
+
+  // SPRINT-30: must be before GET articles/:id — literal "saved" is not an article id
+  @Get('articles/saved')
+  @UseGuards(AuthGuard)
+  getSavedArticles(
+    @CurrentUser('id') userId: string,
+    @Query() query: PaginationDto,
+  ) {
+    return this.newsService.getSavedArticles(userId, query);
   }
 
   @Get('articles/:id/stats')
@@ -39,6 +66,17 @@ export class NewsController {
     @Param('id') articleId: string,
   ) {
     return this.newsService.getArticleStats(userId, articleId);
+  }
+
+  // SPRINT-30: toggle save with article metadata body
+  @Post('articles/:id/save')
+  @UseGuards(AuthGuard)
+  toggleArticleSave(
+    @CurrentUser('id') userId: string,
+    @Param('id') articleId: string,
+    @Body() dto: SaveNewsArticleDto,
+  ) {
+    return this.newsService.toggleArticleSave(userId, articleId, dto);
   }
 
   @Post('articles/:id/like')

@@ -4,6 +4,8 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
+  HttpStatus,
   Param,
   Patch,
   Post,
@@ -23,8 +25,10 @@ import { FileInterceptor } from '@nestjs/platform-express';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { UsersService } from './users.service';
 import { PostsService } from '../posts/posts.service';
+import { SettingsService } from '../settings/settings.service'; // SPRINT-27
+import { FoodService } from '../food/food.service'; // SPRINT-29
 import { UpdateProfileDto } from './dto/update-profile.dto';
-import { RegisterPushTokenDto } from './dto/register-push-token.dto';
+import { UserRegisterPushTokenDto } from './dto/register-push-token.dto';
 import { CreateSupportTicketDto } from './dto/create-support-ticket.dto';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 
@@ -36,6 +40,8 @@ export class UsersController {
   constructor(
     private readonly usersService: UsersService,
     private readonly postsService: PostsService,
+    private readonly settingsService: SettingsService, // SPRINT-27
+    private readonly foodService: FoodService, // SPRINT-29
   ) {}
 
   @Get('me')
@@ -111,6 +117,12 @@ export class UsersController {
     return this.usersService.getMyAchievements(userId);
   }
 
+  @Get('me/reservations') // SPRINT-29: before GET :id routes
+  @ApiOperation({ summary: 'Get all reservations made by the current user' })
+  async getMyReservations(@CurrentUser('id') userId: string) {
+    return this.foodService.getMyReservations(userId);
+  }
+
   @Get('me/posts')
   @ApiOperation({ summary: 'All content by current user (unified)' })
   @ApiQuery({ name: 'page', required: false })
@@ -126,7 +138,7 @@ export class UsersController {
   @Post('push-token')
   async registerPushToken(
     @CurrentUser('id') userId: string,
-    @Body() dto: RegisterPushTokenDto,
+    @Body() dto: UserRegisterPushTokenDto,
   ) {
     await this.usersService.registerPushToken(userId, dto.token);
     return { message: 'Push token registered' };
@@ -135,7 +147,7 @@ export class UsersController {
   @Delete('push-token')
   async removePushToken(
     @CurrentUser('id') userId: string,
-    @Body() dto: RegisterPushTokenDto,
+    @Body() dto: UserRegisterPushTokenDto,
   ) {
     await this.usersService.removePushToken(userId, dto.token);
     return { message: 'Push token removed' };
@@ -163,6 +175,27 @@ export class UsersController {
     @Param('username') username: string,
   ) {
     return this.usersService.getUserByUsername(requestingUserId, username);
+  }
+
+  // SPRINT-27: RESTful block/unblock — placed before GET :id (same :id segment, distinct method + suffix)
+  @Post(':id/block')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Block a user by ID' })
+  async blockUserById(
+    @CurrentUser('id') currentUserId: string,
+    @Param('id') targetUserId: string,
+  ) {
+    return this.settingsService.blockUser(currentUserId, { userId: targetUserId });
+  }
+
+  @Delete(':id/block')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Unblock a user by ID' })
+  async unblockUserById(
+    @CurrentUser('id') currentUserId: string,
+    @Param('id') targetUserId: string,
+  ) {
+    return this.settingsService.unblockUser(currentUserId, targetUserId);
   }
 
   @Get(':id')

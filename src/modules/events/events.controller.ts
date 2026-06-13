@@ -25,7 +25,7 @@ import { EventsService } from './events.service';
 import { CreateEventDto } from './dto/create-event.dto';
 import { EventsQueryDto } from './dto/events-query.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
-import { ReportReasonDto } from './dto/report-reason.dto';
+import { EventReportReasonDto } from './dto/report-reason.dto';
 import { AttendEventDto } from './dto/attend-event.dto';
 
 const EVENT_UPLOAD_MAX_SIZE = 5 * 1024 * 1024;
@@ -200,7 +200,7 @@ export class EventsController {
   async report(
     @CurrentUser('id') userId: string,
     @Param('id') id: string,
-    @Body() dto: ReportReasonDto,
+    @Body() dto: EventReportReasonDto,
   ) {
     return this.eventsService.reportEvent(userId, id, dto.reason);
   }

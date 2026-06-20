@@ -1,12 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import {
-  DeleteObjectCommand,
-  GetObjectCommand,
-  PutObjectCommand,
-  S3Client,
-} from '@aws-sdk/client-s3';
-import { getSignedUrl as awsGetSignedUrl } from '@aws-sdk/s3-request-presigner';
+import { v2 as cloudinary } from 'cloudinary';
+import type { UploadApiResponse } from 'cloudinary';
 
 const ALLOWED_MIME_TYPES = [
   'image/jpeg',
@@ -30,6 +25,9 @@ const MAGIC: Array<{ mime: string; check: (buf: Buffer) => boolean }> = [
   { mime: 'video/quicktime', check: (b) => b.length >= 8 && b[4] === 0x66 && b[5] === 0x74 && b[6] === 0x79 && b[7] === 0x71 },
 ];
 
+const CLOUDINARY_URL_PATTERN =
+  /^https:\/\/res\.cloudinary\.com\/[^/]+\/([^/]+)\/(?:upload|private)\/(?:v\d+\/)?(.+)\.[^/.?]+$/;
+
 function detectMimeFromMagic(buffer: Buffer): string | null {
   for (const { mime, check } of MAGIC) {
     if (check(buffer)) return mime;
@@ -39,19 +37,14 @@ function detectMimeFromMagic(buffer: Buffer): string | null {
 
 @Injectable()
 export class StorageService {
-  private readonly client: S3Client;
-  private readonly bucketName: string;
-  private readonly bucketUrl: string;
+  private readonly cloudName: string;
 
   constructor(private readonly configService: ConfigService) {
-    this.bucketName = this.configService.get<string>('AWS_S3_BUCKET_NAME', '');
-    this.bucketUrl = this.configService.get<string>('AWS_S3_BUCKET_URL', '').replace(/\/$/, '');
-    this.client = new S3Client({
-      region: this.configService.get<string>('AWS_REGION'),
-      credentials: {
-        accessKeyId: this.configService.get<string>('AWS_ACCESS_KEY_ID', ''),
-        secretAccessKey: this.configService.get<string>('AWS_SECRET_ACCESS_KEY', ''),
-      },
+    this.cloudName = this.configService.get<string>('CLOUDINARY_CLOUD_NAME', '');
+    cloudinary.config({
+      cloud_name: this.cloudName,
+      api_key: this.configService.get<string>('CLOUDINARY_API_KEY', ''),
+      api_secret: this.configService.get<string>('CLOUDINARY_API_SECRET', ''),
     });
   }
 
@@ -69,22 +62,11 @@ export class StorageService {
     return map[mimeType] ?? 'bin';
   }
 
-  /**
-   * Public base URL for objects in the bucket. Uses AWS_S3_BUCKET_URL when set;
-   * otherwise virtual-hosted–style https://{bucket}.s3.{region}.amazonaws.com
-   * so uploads never store a bare `/folder/key` path that clients mis-resolve to the API host.
-   */
   getPublicBaseUrl(): string {
-    if (this.bucketUrl) return this.bucketUrl;
-    if (!this.bucketName) return '';
-    const region = this.configService.get<string>('AWS_REGION', 'us-east-1');
-    return `https://${this.bucketName}.s3.${region}.amazonaws.com`;
+    if (!this.cloudName) return '';
+    return `https://res.cloudinary.com/${this.cloudName}`;
   }
 
-  /**
-   * Normalize a stored DB value (full URL, S3 key, or legacy `/events/...` from misconfigured uploads)
-   * to an absolute https URL for mobile/web clients.
-   */
   resolvePublicUrl(stored: string | null | undefined): string {
     if (stored == null || stored === '') return '';
     const s = stored.trim();
@@ -98,81 +80,38 @@ export class StorageService {
     return `${base}/${key}`;
   }
 
-  /**
-   * Extract S3 object key from a stored URL or `folder/file.ext` key string.
-   * Returns null for non-S3 URLs (e.g. external avatars) or unknown shapes.
-   */
   extractObjectKey(stored: string): string | null {
-    if (!stored || !this.bucketName) return null;
+    if (!stored) return null;
     const s = stored.trim();
     if (s.startsWith('/api/') || s.startsWith('api/')) return null;
 
-    const stripQuery = (url: string) => url.split('?')[0] ?? url;
+    const compositeMatch = /^[^:]+:[^:]+:.+$/.test(s);
+    if (compositeMatch) {
+      const parts = s.split(':');
+      if (parts.length === 3) return parts[2] ?? null;
+    }
 
-    if (this.bucketUrl && (s.startsWith('http://') || s.startsWith('https://'))) {
-      const base = this.bucketUrl;
-      if (s.startsWith(`${base}/`)) {
-        return stripQuery(s.slice(base.length + 1)) || null;
-      }
-    }
-    const computedBase = this.getPublicBaseUrl();
-    if (
-      computedBase &&
-      (s.startsWith('http://') || s.startsWith('https://')) &&
-      s.startsWith(`${computedBase}/`)
-    ) {
-      return stripQuery(s.slice(computedBase.length + 1)) || null;
-    }
+    const urlMatch = s.match(CLOUDINARY_URL_PATTERN);
+    if (urlMatch) return urlMatch[2] ?? null;
 
     if (!s.startsWith('http://') && !s.startsWith('https://')) {
       const key = s.replace(/^\/+/, '');
       if (key.includes('/') && !key.includes('..')) return key;
-      return null;
     }
 
-    try {
-      const u = new URL(s);
-      const host = u.hostname;
-      const path = u.pathname.replace(/^\//, '');
-      if (
-        host.startsWith(`${this.bucketName}.s3.`) ||
-        host === `${this.bucketName}.s3.amazonaws.com`
-      ) {
-        return stripQuery(path) || null;
-      }
-      if (host.startsWith('s3.') && path.startsWith(`${this.bucketName}/`)) {
-        return stripQuery(path.slice(this.bucketName.length + 1)) || null;
-      }
-    } catch {
-      return null;
-    }
     return null;
   }
 
-  /**
-   * URL safe to pass to browsers / React Native for S3 objects that may be private.
-   * When AWS_S3_PRESIGN_GET_URLS is true (default), returns a presigned GET URL.
-   * Set AWS_S3_PRESIGN_GET_URLS=false only if the bucket allows public GetObject.
-   */
   async getReadUrlForClient(
     stored: string | null | undefined,
-    expiresInSeconds = 7200,
+    _expiresInSeconds = 7200,
   ): Promise<string> {
-    if (stored == null || stored === '') return '';
-    const s = stored.trim();
-    const presignEnabled =
-      this.configService.get<string>('AWS_S3_PRESIGN_GET_URLS', 'true') !== 'false';
-    if (!presignEnabled || !this.bucketName) {
-      return this.resolvePublicUrl(stored);
-    }
-    const key = this.extractObjectKey(s);
-    if (key) {
-      return this.getSignedUrl(key, expiresInSeconds);
-    }
-    if (s.startsWith('http://') || s.startsWith('https://')) {
-      return s;
-    }
     return this.resolvePublicUrl(stored);
+  }
+
+  private resourceTypeFromMime(mimeType: string): 'image' | 'video' {
+    if (mimeType.startsWith('video/')) return 'video';
+    return 'image';
   }
 
   private validateMime(buffer: Buffer, declaredMimeType: string): string {
@@ -192,6 +131,33 @@ export class StorageService {
     return detected;
   }
 
+  private uploadBuffer(
+    buffer: Buffer,
+    mimeType: string,
+    publicId: string,
+    extension: string,
+    deliveryType: 'upload' | 'private',
+  ): Promise<UploadApiResponse> {
+    const resourceType = this.resourceTypeFromMime(mimeType);
+    return new Promise((resolve, reject) => {
+      const stream = cloudinary.uploader.upload_stream(
+        {
+          public_id: publicId,
+          resource_type: resourceType,
+          type: deliveryType,
+          format: extension,
+          overwrite: true,
+        },
+        (error, result) => {
+          if (error) reject(error);
+          else if (!result) reject(new Error('Cloudinary upload returned no result'));
+          else resolve(result);
+        },
+      );
+      stream.end(buffer);
+    });
+  }
+
   async uploadPublicFile(
     buffer: Buffer,
     mimeType: string,
@@ -200,17 +166,15 @@ export class StorageService {
     extension: string,
   ): Promise<string> {
     const authoritativeMimeType = this.validateMime(buffer, mimeType);
-    const key = `${folder}/${fileUuid}.${extension}`;
-    await this.client.send(
-      new PutObjectCommand({
-        Bucket: this.bucketName,
-        Key: key,
-        Body: buffer,
-        ContentType: authoritativeMimeType,
-      }),
+    const publicId = `${folder}/${fileUuid}`;
+    const result = await this.uploadBuffer(
+      buffer,
+      authoritativeMimeType,
+      publicId,
+      extension,
+      'upload',
     );
-    const base = this.getPublicBaseUrl();
-    return base ? `${base}/${key}` : `/${key}`;
+    return result.secure_url;
   }
 
   async uploadPrivateFile(
@@ -221,50 +185,66 @@ export class StorageService {
     extension: string,
   ): Promise<string> {
     const authoritativeMimeType = this.validateMime(buffer, mimeType);
-    const key = `${folder}/${fileUuid}.${extension}`;
-    await this.client.send(
-      new PutObjectCommand({
-        Bucket: this.bucketName,
-        Key: key,
-        Body: buffer,
-        ContentType: authoritativeMimeType,
-      }),
-    );
-    return key;
+    const publicId = `${folder}/${fileUuid}`;
+    const resourceType = this.resourceTypeFromMime(authoritativeMimeType);
+    await this.uploadBuffer(buffer, authoritativeMimeType, publicId, extension, 'private');
+    return `${resourceType}:${extension}:${publicId}`;
   }
 
   async getSignedUrl(objectKey: string, expiresInSeconds: number): Promise<string> {
-    const cmd = new GetObjectCommand({
-      Bucket: this.bucketName,
-      Key: objectKey,
+    const parts = objectKey.split(':');
+    if (parts.length !== 3) {
+      throw new BadRequestException({
+        code: 'FILE_INVALID_KEY',
+        message: 'Invalid document key format.',
+      });
+    }
+    const [resourceType, extension, publicId] = parts;
+    const expiresAt = Math.floor(Date.now() / 1000) + expiresInSeconds;
+    return cloudinary.utils.private_download_url(publicId, extension, {
+      resource_type: resourceType,
+      type: 'private',
+      expires_at: expiresAt,
     });
-    return awsGetSignedUrl(this.client, cmd, { expiresIn: expiresInSeconds });
+  }
+
+  private parseCloudinaryUrl(url: string): { resourceType: string; publicId: string; type: 'upload' | 'private' } | null {
+    const match = url.match(CLOUDINARY_URL_PATTERN);
+    if (!match) return null;
+    const deliverySegment = url.includes('/private/') ? 'private' : 'upload';
+    return {
+      resourceType: match[1]!,
+      publicId: match[2]!,
+      type: deliverySegment === 'private' ? 'private' : 'upload',
+    };
   }
 
   async deleteFile(keyOrUrl: string): Promise<void> {
-    let key = keyOrUrl;
-    if (keyOrUrl.startsWith('http://') || keyOrUrl.startsWith('https://')) {
-      const base = this.getPublicBaseUrl();
-      if (base && keyOrUrl.startsWith(`${base}/`)) {
-        key = keyOrUrl.slice(base.length + 1);
-      } else if (this.bucketUrl && keyOrUrl.startsWith(`${this.bucketUrl}/`)) {
-        key = keyOrUrl.slice(this.bucketUrl.length + 1);
-      } else {
-        try {
-          const u = new URL(keyOrUrl);
-          key = u.pathname.replace(/^\//, '');
-        } catch {
-          key = keyOrUrl;
-        }
-      }
+    let resourceType: string;
+    let publicId: string;
+    let deliveryType: 'upload' | 'private';
+
+    if (keyOrUrl.startsWith('https://res.cloudinary.com')) {
+      const parsed = this.parseCloudinaryUrl(keyOrUrl);
+      if (!parsed) return;
+      resourceType = parsed.resourceType;
+      publicId = parsed.publicId;
+      deliveryType = parsed.type;
+    } else if (/^[^:]+:[^:]+:.+$/.test(keyOrUrl)) {
+      const parts = keyOrUrl.split(':');
+      if (parts.length !== 3) return;
+      resourceType = parts[0]!;
+      publicId = parts[2]!;
+      deliveryType = 'private';
     } else {
-      key = keyOrUrl.replace(/^\//, '');
+      return;
     }
-    await this.client.send(
-      new DeleteObjectCommand({
-        Bucket: this.bucketName,
-        Key: key,
-      }),
-    );
+
+    const result = await cloudinary.uploader.destroy(publicId, {
+      resource_type: resourceType,
+      type: deliveryType,
+      invalidate: true,
+    });
+    if (result.result === 'not found') return;
   }
 }

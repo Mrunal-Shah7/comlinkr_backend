@@ -5,6 +5,7 @@ node_modules
 /generated/prisma
 /test-payloads
 /dist
+*.tsbuildinfo
 prisma.config.js
 prisma.config.d.ts
 prisma.config.js.map

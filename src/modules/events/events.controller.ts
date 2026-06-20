@@ -38,10 +38,7 @@ export class EventsController {
   @Get('stories')
   @ApiOperation({ summary: 'Lightweight events for feed story strip' })
   @ApiQuery({ name: 'city', required: false })
-  getStories(
-    @CurrentUser('id') userId: string,
-    @Query('city') city?: string,
-  ) {
+  getStories(@CurrentUser('id') userId: string, @Query('city') city?: string) {
     return this.eventsService.getStoryEvents(userId, city);
   }
 
@@ -62,10 +59,7 @@ export class EventsController {
   @ApiResponse({ status: 200, description: 'Paginated saved events' })
   @ApiQuery({ name: 'page', required: false })
   @ApiQuery({ name: 'limit', required: false })
-  getSaved(
-    @CurrentUser('id') userId: string,
-    @Query() query: PaginationDto,
-  ) {
+  getSaved(@CurrentUser('id') userId: string, @Query() query: PaginationDto) {
     return this.eventsService.getSavedEvents(userId, query);
   }
 
@@ -179,19 +173,13 @@ export class EventsController {
 
   @Delete(':id/register')
   @ApiOperation({ summary: 'Cancel registration (alias of cancel attend)' })
-  async unregister(
-    @CurrentUser('id') userId: string,
-    @Param('id') id: string,
-  ) {
+  async unregister(@CurrentUser('id') userId: string, @Param('id') id: string) {
     return this.eventsService.cancelRegistration(userId, id);
   }
 
   @Post(':id/save')
   @ApiOperation({ summary: 'Toggle saved / bookmark' })
-  async toggleSave(
-    @CurrentUser('id') userId: string,
-    @Param('id') id: string,
-  ) {
+  async toggleSave(@CurrentUser('id') userId: string, @Param('id') id: string) {
     return this.eventsService.toggleSaveEvent(userId, id);
   }
 
@@ -207,19 +195,13 @@ export class EventsController {
 
   @Get(':id/attendees')
   @ApiOperation({ summary: 'List attendees (host only)' })
-  getAttendees(
-    @CurrentUser('id') userId: string,
-    @Param('id') id: string,
-  ) {
+  getAttendees(@CurrentUser('id') userId: string, @Param('id') id: string) {
     return this.eventsService.getEventAttendees(userId, id);
   }
 
   @Get(':id/ticket')
   @ApiOperation({ summary: 'Current user ticket stub (after registration)' })
-  getTicket(
-    @CurrentUser('id') userId: string,
-    @Param('id') id: string,
-  ) {
+  getTicket(@CurrentUser('id') userId: string, @Param('id') id: string) {
     return this.eventsService.getMyTicket(userId, id);
   }
 }

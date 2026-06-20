@@ -15,7 +15,10 @@ import { RestaurantQueryDto } from './dto/restaurant-query.dto';
 import { CreateReviewDto } from './dto/create-review.dto';
 import { UpdateReviewDto } from './dto/update-review.dto';
 import { CreateReservationDto } from './dto/create-reservation.dto';
-import { PaginationDto, createPaginationMeta } from '../../common/dto/pagination.dto';
+import {
+  PaginationDto,
+  createPaginationMeta,
+} from '../../common/dto/pagination.dto';
 import { MessagingService } from '../messaging/messaging.service';
 import { NotificationsService } from '../notifications/notifications.service'; // SPRINT-29
 import { ReservationStatus } from '@prisma/client'; // SPRINT-29
@@ -188,7 +191,11 @@ export class FoodService {
       saves: userId ? { where: { userId }, select: { id: true } } : false,
     };
 
-    if (sort === 'distance' && userLoc.latitude != null && userLoc.longitude != null) {
+    if (
+      sort === 'distance' &&
+      userLoc.latitude != null &&
+      userLoc.longitude != null
+    ) {
       const all = await this.prisma.restaurant.findMany({
         where,
         orderBy: { createdAt: 'desc' },
@@ -221,9 +228,7 @@ export class FoodService {
     }
 
     const orderBy: Prisma.RestaurantOrderByWithRelationInput =
-      sort === 'rating'
-        ? { averageRating: 'desc' }
-        : { createdAt: 'desc' };
+      sort === 'rating' ? { averageRating: 'desc' } : { createdAt: 'desc' };
 
     const [items, total] = await this.prisma.$transaction([
       this.prisma.restaurant.findMany({
@@ -398,9 +403,23 @@ export class FoodService {
     }
     const updateData: Prisma.RestaurantUpdateInput = {};
     const fields: (keyof UpdateRestaurantDto)[] = [
-      'name', 'cuisine', 'description', 'address', 'city', 'state', 'country',
-      'latitude', 'longitude', 'phoneNumber', 'priceRange', 'waitTimeMinutes',
-      'openingTime', 'closingTime', 'availableServices', 'popularDishes', 'tags',
+      'name',
+      'cuisine',
+      'description',
+      'address',
+      'city',
+      'state',
+      'country',
+      'latitude',
+      'longitude',
+      'phoneNumber',
+      'priceRange',
+      'waitTimeMinutes',
+      'openingTime',
+      'closingTime',
+      'availableServices',
+      'popularDishes',
+      'tags',
       'isOpen',
     ];
     for (const key of fields) {
@@ -522,7 +541,12 @@ export class FoodService {
   ) {
     const restaurant = await this.prisma.restaurant.findUnique({
       where: { id: restaurantId },
-      select: { id: true, ownerId: true, averageRating: true, totalReviews: true },
+      select: {
+        id: true,
+        ownerId: true,
+        averageRating: true,
+        totalReviews: true,
+      },
     });
     if (!restaurant) {
       throw new NotFoundException({
@@ -537,7 +561,12 @@ export class FoodService {
       });
     }
     const ownerBlockedReviewer = await this.prisma.blockedUser.findUnique({
-      where: { blockerId_blockedId: { blockerId: restaurant.ownerId, blockedId: userId } },
+      where: {
+        blockerId_blockedId: {
+          blockerId: restaurant.ownerId,
+          blockedId: userId,
+        },
+      },
     });
     if (ownerBlockedReviewer) {
       throw new ForbiddenException('You cannot review this restaurant.');
@@ -702,8 +731,7 @@ export class FoodService {
     const totalReviews = restaurant.totalReviews;
     const oldAvg = Number(restaurant.averageRating);
     const oldRating = review.rating;
-    const ratingChanged =
-      dto.rating !== undefined && dto.rating !== oldRating;
+    const ratingChanged = dto.rating !== undefined && dto.rating !== oldRating;
     let newAvgRounded = oldAvg;
     if (ratingChanged && totalReviews > 0) {
       const newRating = dto.rating as number;
@@ -771,8 +799,7 @@ export class FoodService {
     await this.prisma.$transaction(async (tx) => {
       await tx.restaurantReview.delete({ where: { id: review.id } });
       if (totalReviews > 1) {
-        const newAvg =
-          (oldAvg * totalReviews - rRating) / (totalReviews - 1);
+        const newAvg = (oldAvg * totalReviews - rRating) / (totalReviews - 1);
         const rounded = Math.round(newAvg * 10) / 10;
         await tx.restaurant.update({
           where: { id: restaurantId },
@@ -793,32 +820,30 @@ export class FoodService {
   }
 
   /** SPRINT-29: shared reservation response shape */
-  private formatReservation(
-    reservation: {
+  private formatReservation(reservation: {
+    id: string;
+    restaurantId: string;
+    userId: string;
+    date: Date;
+    time: string;
+    partySize: number;
+    note: string | null;
+    status: ReservationStatus;
+    createdAt: Date;
+    restaurant: {
       id: string;
-      restaurantId: string;
-      userId: string;
-      date: Date;
-      time: string;
-      partySize: number;
-      note: string | null;
-      status: ReservationStatus;
-      createdAt: Date;
-      restaurant: {
-        id: string;
-        name: string;
-        city?: string;
-        cuisine?: string;
-        images?: Array<{ imageUrl: string }>;
-      };
-      user: {
-        id: string;
-        username: string;
-        fullName: string;
-        avatarUrl: string | null;
-      };
-    },
-  ) {
+      name: string;
+      city?: string;
+      cuisine?: string;
+      images?: Array<{ imageUrl: string }>;
+    };
+    user: {
+      id: string;
+      username: string;
+      fullName: string;
+      avatarUrl: string | null;
+    };
+  }) {
     const firstImage = reservation.restaurant.images?.[0]?.imageUrl;
     return {
       id: reservation.id,
@@ -853,7 +878,11 @@ export class FoodService {
         city: true,
         cuisine: true,
         ownerId: true,
-        images: { orderBy: { order: 'asc' as const }, take: 1, select: { imageUrl: true } },
+        images: {
+          orderBy: { order: 'asc' as const },
+          take: 1,
+          select: { imageUrl: true },
+        },
       },
     },
     user: {
@@ -949,8 +978,15 @@ export class FoodService {
     const where: { restaurantId: string; status?: ReservationStatus } = {
       restaurantId,
     };
-    const validStatuses: ReservationStatus[] = ['PENDING', 'CONFIRMED', 'CANCELLED'];
-    if (statusFilter && validStatuses.includes(statusFilter as ReservationStatus)) {
+    const validStatuses: ReservationStatus[] = [
+      'PENDING',
+      'CONFIRMED',
+      'CANCELLED',
+    ];
+    if (
+      statusFilter &&
+      validStatuses.includes(statusFilter as ReservationStatus)
+    ) {
       where.status = statusFilter as ReservationStatus;
     }
     const rows = await this.prisma.restaurantReservation.findMany({
@@ -974,8 +1010,23 @@ export class FoodService {
     const reservation = await this.prisma.restaurantReservation.findUnique({
       where: { id: reservationId },
       include: {
-        restaurant: { select: { ownerId: true, id: true, name: true, city: true, cuisine: true, images: { orderBy: { order: 'asc' }, take: 1, select: { imageUrl: true } } } },
-        user: { select: { id: true, username: true, fullName: true, avatarUrl: true } },
+        restaurant: {
+          select: {
+            ownerId: true,
+            id: true,
+            name: true,
+            city: true,
+            cuisine: true,
+            images: {
+              orderBy: { order: 'asc' },
+              take: 1,
+              select: { imageUrl: true },
+            },
+          },
+        },
+        user: {
+          select: { id: true, username: true, fullName: true, avatarUrl: true },
+        },
       },
     });
     if (!reservation) {
@@ -1010,8 +1061,23 @@ export class FoodService {
     const reservation = await this.prisma.restaurantReservation.findUnique({
       where: { id: reservationId },
       include: {
-        restaurant: { select: { ownerId: true, name: true, id: true, city: true, cuisine: true, images: { orderBy: { order: 'asc' }, take: 1, select: { imageUrl: true } } } },
-        user: { select: { id: true, username: true, fullName: true, avatarUrl: true } },
+        restaurant: {
+          select: {
+            ownerId: true,
+            name: true,
+            id: true,
+            city: true,
+            cuisine: true,
+            images: {
+              orderBy: { order: 'asc' },
+              take: 1,
+              select: { imageUrl: true },
+            },
+          },
+        },
+        user: {
+          select: { id: true, username: true, fullName: true, avatarUrl: true },
+        },
       },
     });
     if (!reservation) {
@@ -1027,7 +1093,9 @@ export class FoodService {
       });
     }
     if (reservation.status !== 'PENDING') {
-      throw new BadRequestException('Only pending reservations can be confirmed');
+      throw new BadRequestException(
+        'Only pending reservations can be confirmed',
+      );
     }
     const updated = await this.prisma.restaurantReservation.update({
       where: { id: reservationId },
@@ -1144,7 +1212,9 @@ export class FoodService {
         include: {
           restaurant: {
             include: {
-              owner: { include: { userBadges: { select: { badgeType: true } } } },
+              owner: {
+                include: { userBadges: { select: { badgeType: true } } },
+              },
               images: { orderBy: { order: 'asc' } },
               favorites: { where: { userId }, select: { id: true } },
               saves: { where: { userId }, select: { id: true } },
@@ -1232,7 +1302,9 @@ export class FoodService {
         include: {
           restaurant: {
             include: {
-              owner: { include: { userBadges: { select: { badgeType: true } } } },
+              owner: {
+                include: { userBadges: { select: { badgeType: true } } },
+              },
               images: { orderBy: { order: 'asc' } },
               favorites: { where: { userId }, select: { id: true } },
               saves: { where: { userId }, select: { id: true } },
@@ -1254,5 +1326,3 @@ export class FoodService {
     return { data, meta: createPaginationMeta(page, limit, total) };
   }
 }
-
-

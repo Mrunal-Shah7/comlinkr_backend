@@ -29,10 +29,11 @@ export class NotificationsService {
   constructor(private readonly prisma: PrismaService) {}
 
   async createNotification(params: CreateNotificationParams) {
-    const { userId, type, title, body, referenceType, referenceId, actorId } = params;
+    const { userId, type, title, body, referenceType, referenceId, actorId } =
+      params;
     if (actorId && actorId === userId) return null;
 
-    let prefs = await this.prisma.notificationPreference.findUnique({
+    const prefs = await this.prisma.notificationPreference.findUnique({
       where: { userId },
     });
     const preferences = prefs ?? DEFAULT_PREFERENCES;
@@ -101,7 +102,10 @@ export class NotificationsService {
     return { data, meta: createPaginationMeta(page, limit, total) };
   }
 
-  async markAsRead(userId: string, notificationId: string): Promise<{ isRead: boolean }> {
+  async markAsRead(
+    userId: string,
+    notificationId: string,
+  ): Promise<{ isRead: boolean }> {
     const notification = await this.prisma.notification.findUnique({
       where: { id: notificationId },
     });
@@ -137,7 +141,10 @@ export class NotificationsService {
     return prefs ?? DEFAULT_PREFERENCES;
   }
 
-  async deleteNotification(userId: string, notificationId: string): Promise<void> {
+  async deleteNotification(
+    userId: string,
+    notificationId: string,
+  ): Promise<void> {
     const n = await this.prisma.notification.findUnique({
       where: { id: notificationId },
     });
@@ -169,7 +176,10 @@ export class NotificationsService {
     return { id: row.id };
   }
 
-  async removePushToken(userId: string, token?: string): Promise<{ removed: number }> {
+  async removePushToken(
+    userId: string,
+    token?: string,
+  ): Promise<{ removed: number }> {
     if (token) {
       const r = await this.prisma.pushDevice.deleteMany({
         where: { userId, token },
@@ -180,7 +190,10 @@ export class NotificationsService {
     return { removed: r.count };
   }
 
-  async updatePreferences(userId: string, dto: UpdateNotificationPreferencesDto) {
+  async updatePreferences(
+    userId: string,
+    dto: UpdateNotificationPreferencesDto,
+  ) {
     const data: Record<string, boolean> = { ...DEFAULT_PREFERENCES };
     if (dto.pushEnabled !== undefined) data.pushEnabled = dto.pushEnabled;
     if (dto.emailEnabled !== undefined) data.emailEnabled = dto.emailEnabled;

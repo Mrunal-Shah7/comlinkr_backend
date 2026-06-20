@@ -28,12 +28,16 @@ export class NewsCron {
       if (failed.length > 0) {
         failed.forEach((res, index) => {
           if (res.status === 'rejected') {
-            this.logger.warn(`Warm failed for location index ${index}: ${res.reason}`);
+            this.logger.warn(
+              `Warm failed for location index ${index}: ${res.reason}`,
+            );
           }
         });
       }
     } catch (error) {
-      this.logger.error(`Cache warm failed: ${error instanceof Error ? error.message : String(error)}`);
+      this.logger.error(
+        `Cache warm failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }
 }

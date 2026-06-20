@@ -12,7 +12,10 @@ import { CreateFeedPostDto } from './dto/create-feed-post.dto';
 import { UpdateFeedPostDto } from './dto/update-feed-post.dto';
 import { FeedQueryDto } from './dto/feed-query.dto';
 import { CreateCommentDto } from './dto/create-comment.dto';
-import { PaginationDto, createPaginationMeta } from '../../common/dto/pagination.dto';
+import {
+  PaginationDto,
+  createPaginationMeta,
+} from '../../common/dto/pagination.dto';
 import { sanitizeInput } from '../../common/utils/sanitize';
 import { NeighborhoodMood } from '@prisma/client';
 import { VoteNeighborhoodMoodDto } from './dto/vote-neighborhood-mood.dto';
@@ -90,7 +93,10 @@ export class FeedService {
     return { city: trimmed, cityKey: trimmed.toLowerCase() };
   }
 
-  private async resolveMoodCity(userId: string, cityOverride?: string): Promise<{ city: string; cityKey: string } | null> {
+  private async resolveMoodCity(
+    userId: string,
+    cityOverride?: string,
+  ): Promise<{ city: string; cityKey: string } | null> {
     const provided = cityOverride?.trim();
     const city = provided || (await this.getUserCity(userId))?.trim() || '';
     if (!city) return null;
@@ -115,10 +121,13 @@ export class FeedService {
 
     const countByMood = new Map<NeighborhoodMood, number>();
     for (const row of counts) {
-      const mood = row.mood as NeighborhoodMood;
+      const mood = row.mood;
       countByMood.set(mood, (countByMood.get(mood) ?? 0) + 1);
     }
-    const totalVotes = Array.from(countByMood.values()).reduce((a, b) => a + b, 0);
+    const totalVotes = Array.from(countByMood.values()).reduce(
+      (a, b) => a + b,
+      0,
+    );
 
     return {
       city,
@@ -129,7 +138,8 @@ export class FeedService {
         return {
           mood,
           count,
-          percentage: totalVotes > 0 ? Math.round((count * 100) / totalVotes) : 0,
+          percentage:
+            totalVotes > 0 ? Math.round((count * 100) / totalVotes) : 0,
         };
       }),
     };
@@ -142,10 +152,18 @@ export class FeedService {
         city: null,
         totalVotes: 0,
         myMood: null,
-        moods: NEIGHBORHOOD_MOODS.map((mood) => ({ mood, count: 0, percentage: 0 })),
+        moods: NEIGHBORHOOD_MOODS.map((mood) => ({
+          mood,
+          count: 0,
+          percentage: 0,
+        })),
       };
     }
-    return this.buildNeighborhoodMoodSummary(userId, cityData.city, cityData.cityKey);
+    return this.buildNeighborhoodMoodSummary(
+      userId,
+      cityData.city,
+      cityData.cityKey,
+    );
   }
 
   async voteNeighborhoodMood(userId: string, dto: VoteNeighborhoodMoodDto) {
@@ -171,7 +189,11 @@ export class FeedService {
       },
     });
 
-    return this.buildNeighborhoodMoodSummary(userId, cityData.city, cityData.cityKey);
+    return this.buildNeighborhoodMoodSummary(
+      userId,
+      cityData.city,
+      cityData.cityKey,
+    );
   }
 
   async getFeed(userId: string, query: FeedQueryDto) {
@@ -296,8 +318,12 @@ export class FeedService {
         content: sanitizeInput(dto.content ?? ''),
         category: dto.category,
         tags: (dto.tags ?? []).map((t) => sanitizeInput(String(t))),
-        location: dto.location != null ? sanitizeInput(String(dto.location)) : null,
-        sourceLabel: dto.sourceLabel != null ? sanitizeInput(String(dto.sourceLabel)) : null,
+        location:
+          dto.location != null ? sanitizeInput(String(dto.location)) : null,
+        sourceLabel:
+          dto.sourceLabel != null
+            ? sanitizeInput(String(dto.sourceLabel))
+            : null,
       },
     });
 
@@ -359,11 +385,7 @@ export class FeedService {
     return this.formatFeedPost(created, userId);
   }
 
-  async updateFeedPost(
-    userId: string,
-    postId: string,
-    dto: UpdateFeedPostDto,
-  ) {
+  async updateFeedPost(userId: string, postId: string, dto: UpdateFeedPostDto) {
     const existing = await this.prisma.feedPost.findUnique({
       where: { id: postId },
     });
@@ -382,11 +404,15 @@ export class FeedService {
 
     const data: any = {};
     if (dto.title !== undefined) data.title = sanitizeInput(String(dto.title));
-    if (dto.content !== undefined) data.content = sanitizeInput(String(dto.content));
+    if (dto.content !== undefined)
+      data.content = sanitizeInput(String(dto.content));
     if (dto.category !== undefined) data.category = dto.category;
-    if (dto.tags !== undefined) data.tags = dto.tags.map((t) => sanitizeInput(String(t)));
-    if (dto.location !== undefined) data.location = sanitizeInput(String(dto.location));
-    if (dto.sourceLabel !== undefined) data.sourceLabel = sanitizeInput(String(dto.sourceLabel));
+    if (dto.tags !== undefined)
+      data.tags = dto.tags.map((t) => sanitizeInput(String(t)));
+    if (dto.location !== undefined)
+      data.location = sanitizeInput(String(dto.location));
+    if (dto.sourceLabel !== undefined)
+      data.sourceLabel = sanitizeInput(String(dto.sourceLabel));
 
     await this.prisma.feedPost.update({
       where: { id: postId },
@@ -440,7 +466,9 @@ export class FeedService {
       });
     }
     const authorBlockedLiker = await this.prisma.blockedUser.findUnique({
-      where: { blockerId_blockedId: { blockerId: post.authorId, blockedId: userId } },
+      where: {
+        blockerId_blockedId: { blockerId: post.authorId, blockedId: userId },
+      },
     });
     if (authorBlockedLiker) {
       return { liked: false, likesCount: post.likesCount };
@@ -486,7 +514,7 @@ export class FeedService {
         }),
       ]);
       if (post && post.authorId !== userId && liker) {
-        this.notificationsService.createNotification({
+        void this.notificationsService.createNotification({
           userId: post.authorId,
           type: 'LIKE',
           title: 'New like on your post',
@@ -500,11 +528,7 @@ export class FeedService {
     return result;
   }
 
-  async addComment(
-    userId: string,
-    postId: string,
-    dto: CreateCommentDto,
-  ) {
+  async addComment(userId: string, postId: string, dto: CreateCommentDto) {
     const post = await this.prisma.feedPost.findUnique({
       where: { id: postId },
       select: { id: true, authorId: true },
@@ -516,7 +540,9 @@ export class FeedService {
       });
     }
     const authorBlockedCommenter = await this.prisma.blockedUser.findUnique({
-      where: { blockerId_blockedId: { blockerId: post.authorId, blockedId: userId } },
+      where: {
+        blockerId_blockedId: { blockerId: post.authorId, blockedId: userId },
+      },
     });
     if (authorBlockedCommenter) {
       throw new ForbiddenException('You cannot comment on this post.');
@@ -545,7 +571,7 @@ export class FeedService {
       select: { authorId: true, title: true },
     });
     if (feedPost && feedPost.authorId !== userId) {
-      this.notificationsService.createNotification({
+      void this.notificationsService.createNotification({
         userId: feedPost.authorId,
         type: 'COMMENT',
         title: 'New comment on your post',
@@ -702,6 +728,3 @@ export class FeedService {
     };
   }
 }
-
-
-

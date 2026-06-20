@@ -33,7 +33,12 @@ const BADGE_TYPES = [
       'Phone number for tenant contact',
       'Property address you intend to list',
     ],
-    requiredFields: ['fullLegalName', 'businessPhone', 'ownershipType', 'propertyAddress'],
+    requiredFields: [
+      'fullLegalName',
+      'businessPhone',
+      'ownershipType',
+      'propertyAddress',
+    ],
     requiredDocuments: ['GOVERNMENT_ID', 'PROOF_OF_OWNERSHIP'],
   },
   {
@@ -55,7 +60,12 @@ const BADGE_TYPES = [
       'Business phone and email',
       'Restaurant physical address',
     ],
-    requiredFields: ['fullLegalName', 'businessPhone', 'restaurantName', 'restaurantAddress'],
+    requiredFields: [
+      'fullLegalName',
+      'businessPhone',
+      'restaurantName',
+      'restaurantAddress',
+    ],
     requiredDocuments: [],
   },
   {
@@ -96,7 +106,12 @@ const BADGE_TYPES = [
       'Your neighborhood or area you regularly visit',
       'A brief bio about your food interests and local knowledge',
     ],
-    requiredFields: ['fullLegalName', 'businessPhone', 'neighborhoodArea', 'reviewerBio'],
+    requiredFields: [
+      'fullLegalName',
+      'businessPhone',
+      'neighborhoodArea',
+      'reviewerBio',
+    ],
     requiredDocuments: [],
   },
 ];
@@ -140,18 +155,31 @@ export class BadgesService {
         orderBy: { createdAt: 'desc' },
       }),
     ]);
-    const badgeTypes: BadgeType[] = ['LANDLORD', 'RESTAURANT_OWNER', 'AGENCY', 'LOCAL_REVIEWER'];
+    const badgeTypes: BadgeType[] = [
+      'LANDLORD',
+      'RESTAURANT_OWNER',
+      'AGENCY',
+      'LOCAL_REVIEWER',
+    ];
     return badgeTypes.map((badgeType) => {
       const badge = userBadges.find((b) => b.badgeType === badgeType) ?? null;
-      const latestApplication = applications.find((a) => a.badgeType === badgeType) ?? null;
-      let status: 'NOT_APPLIED' | 'PENDING' | 'APPROVED' | 'REJECTED' = 'NOT_APPLIED';
+      const latestApplication =
+        applications.find((a) => a.badgeType === badgeType) ?? null;
+      let status: 'NOT_APPLIED' | 'PENDING' | 'APPROVED' | 'REJECTED' =
+        'NOT_APPLIED';
       if (badge) status = 'APPROVED';
       else if (latestApplication?.status === 'PENDING') status = 'PENDING';
       else if (latestApplication?.status === 'REJECTED') status = 'REJECTED';
       return {
         badgeType,
         status,
-        badge: badge ? { id: badge.id, badgeType: badge.badgeType, grantedAt: badge.grantedAt } : null,
+        badge: badge
+          ? {
+              id: badge.id,
+              badgeType: badge.badgeType,
+              grantedAt: badge.grantedAt,
+            }
+          : null,
         latestApplication: latestApplication
           ? {
               id: latestApplication.id,
@@ -165,7 +193,11 @@ export class BadgesService {
     });
   }
 
-  async applyForBadge(userId: string, dto: ApplyBadgeDto, files: Express.Multer.File[]) {
+  async applyForBadge(
+    userId: string,
+    dto: ApplyBadgeDto,
+    files: Express.Multer.File[],
+  ) {
     const existingBadge = await this.prisma.userBadge.findUnique({
       where: { userId_badgeType: { userId, badgeType: dto.badgeType } },
     });
@@ -184,7 +216,11 @@ export class BadgesService {
     const requiredFields = TYPE_REQUIRED_FIELDS[dto.badgeType];
     for (const field of requiredFields) {
       const value = (dto as any)[field];
-      if (value === undefined || value === null || (typeof value === 'string' && value.trim() === '')) {
+      if (
+        value === undefined ||
+        value === null ||
+        (typeof value === 'string' && value.trim() === '')
+      ) {
         throw new BadRequestException({
           code: 'VALIDATION_ERROR',
           message: `Missing required field: ${field}`,
@@ -194,7 +230,7 @@ export class BadgesService {
 
     const badgeMeta = BADGE_TYPES.find((b) => b.type === dto.badgeType);
     const documentsRequired = (badgeMeta?.requiredDocuments?.length ?? 0) > 0;
-    if (documentsRequired && (!files?.length)) {
+    if (documentsRequired && !files?.length) {
       throw new BadRequestException(
         'At least one document is required (Government-issued ID).',
       );
@@ -370,7 +406,10 @@ export class BadgesService {
     if (!badgeDocument.documentKey) {
       throw new NotFoundException('Document key not found.');
     }
-    const url = await this.storageService.getSignedUrl(badgeDocument.documentKey, 900);
+    const url = await this.storageService.getSignedUrl(
+      badgeDocument.documentKey,
+      900,
+    );
     return { url, expiresIn: 900 };
   }
 
@@ -396,7 +435,12 @@ export class BadgesService {
       adminNotes: string | null;
       reviewedAt: Date | null;
       createdAt: Date;
-      documents: Array<{ id: string; documentType: string; createdAt: Date; documentKey: string | null }>;
+      documents: Array<{
+        id: string;
+        documentType: string;
+        createdAt: Date;
+        documentKey: string | null;
+      }>;
       reviewer?: { id: string; fullName: string } | null;
     },
     _userId: string,
@@ -430,9 +474,10 @@ export class BadgesService {
     if (includeReview && app.status !== 'PENDING') {
       base.adminNotes = app.adminNotes;
       base.reviewedAt = app.reviewedAt;
-      base.reviewedBy = app.reviewer ? { id: app.reviewer.id, name: app.reviewer.fullName } : null;
+      base.reviewedBy = app.reviewer
+        ? { id: app.reviewer.id, name: app.reviewer.fullName }
+        : null;
     }
     return base;
   }
 }
-

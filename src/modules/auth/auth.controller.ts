@@ -9,12 +9,7 @@ import {
   Req,
   Res,
 } from '@nestjs/common';
-import {
-  ApiTags,
-  ApiOperation,
-  ApiResponse,
-  ApiBody,
-} from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiBody } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 import { Public } from '../../common/decorators/public.decorator';
@@ -105,7 +100,10 @@ export class AuthController {
   @Post('google')
   @ApiOperation({ summary: 'Google OAuth login/register' })
   @ApiBody({ type: GoogleAuthDto })
-  @ApiResponse({ status: 200, description: 'User or needsUsername + tempToken' })
+  @ApiResponse({
+    status: 200,
+    description: 'User or needsUsername + tempToken',
+  })
   @ApiResponse({ status: 401, description: 'Invalid Google token' })
   async googleAuth(@Body() dto: GoogleAuthDto, @Req() req: Request) {
     const result = await this.authService.googleAuth(dto, req);
@@ -133,7 +131,10 @@ export class AuthController {
   @Post('apple')
   @ApiOperation({ summary: 'Apple OAuth login/register' })
   @ApiBody({ type: AppleAuthDto })
-  @ApiResponse({ status: 200, description: 'User or needsUsername + tempToken' })
+  @ApiResponse({
+    status: 200,
+    description: 'User or needsUsername + tempToken',
+  })
   @ApiResponse({ status: 401, description: 'Invalid Apple token' })
   async appleAuth(@Body() dto: AppleAuthDto, @Req() req: Request) {
     const result = await this.authService.appleAuth(dto, req);
@@ -161,7 +162,7 @@ export class AuthController {
   @ApiOperation({ summary: 'Destroy session and clear cookie' })
   @ApiResponse({ status: 200, description: 'Logged out' })
   async logout(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
-    const result = await this.authService.logout(req.session!);
+    const result = await this.authService.logout(req.session);
     res.clearCookie(SESSION_COOKIE_NAME);
     return result;
   }

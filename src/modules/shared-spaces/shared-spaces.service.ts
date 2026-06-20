@@ -27,7 +27,9 @@ export class SharedSpacesService {
     private readonly notificationsService: NotificationsService,
   ) {}
 
-  private async buildFileUrl(imageUrl: string | null | undefined): Promise<string> {
+  private async buildFileUrl(
+    imageUrl: string | null | undefined,
+  ): Promise<string> {
     if (imageUrl == null || imageUrl === '') return '';
     return this.storageService.getReadUrlForClient(imageUrl);
   }
@@ -70,7 +72,9 @@ export class SharedSpacesService {
       isSaved = !!s;
     }
     const owner = space.owner;
-    const avatarUrl = owner.avatarUrl ? await this.buildFileUrl(owner.avatarUrl) : null;
+    const avatarUrl = owner.avatarUrl
+      ? await this.buildFileUrl(owner.avatarUrl)
+      : null;
     return {
       id: space.id,
       title: space.title,
@@ -111,7 +115,9 @@ export class SharedSpacesService {
         username: owner.username,
         name: owner.fullName,
         avatarUrl,
-        badges: (owner.userBadges ?? []).map((b) => ({ badgeType: b.badgeType })),
+        badges: (owner.userBadges ?? []).map((b) => ({
+          badgeType: b.badgeType,
+        })),
       },
       host: {
         id: owner.id,
@@ -173,7 +179,9 @@ export class SharedSpacesService {
             select: { sharedSpaceId: true },
           });
     const savedSet = new Set(saves.map((s) => s.sharedSpaceId));
-    const data = await Promise.all(items.map((s) => this.formatSharedSpace(s, userId, savedSet)));
+    const data = await Promise.all(
+      items.map((s) => this.formatSharedSpace(s, userId, savedSet)),
+    );
     return { data, meta: createPaginationMeta(page, limit, total) };
   }
 
@@ -196,7 +204,9 @@ export class SharedSpacesService {
       },
     });
     const savedSet = new Set<string>();
-    return Promise.all(items.map((s) => this.formatSharedSpace(s, userId, savedSet)));
+    return Promise.all(
+      items.map((s) => this.formatSharedSpace(s, userId, savedSet)),
+    );
   }
 
   async getSharedSpaceById(userId: string, id: string) {
@@ -217,7 +227,10 @@ export class SharedSpacesService {
       },
     });
     if (!space) {
-      throw new NotFoundException({ code: 'RESOURCE_NOT_FOUND', message: 'Shared space not found' });
+      throw new NotFoundException({
+        code: 'RESOURCE_NOT_FOUND',
+        message: 'Shared space not found',
+      });
     }
     return this.formatSharedSpace(space, userId);
   }
@@ -273,13 +286,23 @@ export class SharedSpacesService {
     return this.formatSharedSpace(created, userId);
   }
 
-  async updateSharedSpace(userId: string, id: string, dto: UpdateSharedSpaceDto) {
+  async updateSharedSpace(
+    userId: string,
+    id: string,
+    dto: UpdateSharedSpaceDto,
+  ) {
     const space = await this.prisma.sharedSpace.findUnique({ where: { id } });
     if (!space) {
-      throw new NotFoundException({ code: 'RESOURCE_NOT_FOUND', message: 'Shared space not found' });
+      throw new NotFoundException({
+        code: 'RESOURCE_NOT_FOUND',
+        message: 'Shared space not found',
+      });
     }
     if (space.ownerId !== userId) {
-      throw new ForbiddenException({ code: 'FORBIDDEN', message: 'Only the owner can update this space' });
+      throw new ForbiddenException({
+        code: 'FORBIDDEN',
+        message: 'Only the owner can update this space',
+      });
     }
     const data: Prisma.SharedSpaceUpdateInput = {};
     if (dto.title !== undefined) data.title = dto.title;
@@ -295,8 +318,10 @@ export class SharedSpacesService {
     if (dto.deposit !== undefined) data.deposit = dto.deposit;
     if (dto.rooms !== undefined) data.rooms = dto.rooms;
     if (dto.bathrooms !== undefined) data.bathrooms = dto.bathrooms;
-    if (dto.totalOccupants !== undefined) data.totalOccupants = dto.totalOccupants;
-    if (dto.availableSpots !== undefined) data.availableSpots = dto.availableSpots;
+    if (dto.totalOccupants !== undefined)
+      data.totalOccupants = dto.totalOccupants;
+    if (dto.availableSpots !== undefined)
+      data.availableSpots = dto.availableSpots;
     if (dto.petPolicy !== undefined) data.petPolicy = dto.petPolicy;
     if (dto.smoking !== undefined) data.smoking = dto.smoking;
     if (dto.amenities !== undefined) data.amenities = dto.amenities;
@@ -328,10 +353,16 @@ export class SharedSpacesService {
       include: { images: true },
     });
     if (!space) {
-      throw new NotFoundException({ code: 'RESOURCE_NOT_FOUND', message: 'Shared space not found' });
+      throw new NotFoundException({
+        code: 'RESOURCE_NOT_FOUND',
+        message: 'Shared space not found',
+      });
     }
     if (space.ownerId !== userId) {
-      throw new ForbiddenException({ code: 'FORBIDDEN', message: 'Only the owner can delete this space' });
+      throw new ForbiddenException({
+        code: 'FORBIDDEN',
+        message: 'Only the owner can delete this space',
+      });
     }
     for (const img of space.images) {
       try {
@@ -350,10 +381,16 @@ export class SharedSpacesService {
       include: { images: true },
     });
     if (!space) {
-      throw new NotFoundException({ code: 'RESOURCE_NOT_FOUND', message: 'Shared space not found' });
+      throw new NotFoundException({
+        code: 'RESOURCE_NOT_FOUND',
+        message: 'Shared space not found',
+      });
     }
     if (space.ownerId !== userId) {
-      throw new ForbiddenException({ code: 'FORBIDDEN', message: 'You can only add images to your own spaces' });
+      throw new ForbiddenException({
+        code: 'FORBIDDEN',
+        message: 'You can only add images to your own spaces',
+      });
     }
     const existing = space.images.length;
     if (existing + files.length > SPACE_IMAGE_MAX) {
@@ -366,7 +403,10 @@ export class SharedSpacesService {
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       if (file.size > SPACE_IMAGE_MAX_SIZE) {
-        throw new BadRequestException({ code: 'FILE_TOO_LARGE', message: 'Image must be under 5MB' });
+        throw new BadRequestException({
+          code: 'FILE_TOO_LARGE',
+          message: 'Image must be under 5MB',
+        });
       }
       if (!SPACE_IMAGE_MIME.includes(file.mimetype)) {
         throw new BadRequestException({
@@ -395,15 +435,23 @@ export class SharedSpacesService {
   }
 
   async deleteImage(userId: string, spaceId: string, imageId: string) {
-    const space = await this.prisma.sharedSpace.findUnique({ where: { id: spaceId } });
+    const space = await this.prisma.sharedSpace.findUnique({
+      where: { id: spaceId },
+    });
     if (!space || space.ownerId !== userId) {
-      throw new ForbiddenException({ code: 'FORBIDDEN', message: 'Only the owner can remove images' });
+      throw new ForbiddenException({
+        code: 'FORBIDDEN',
+        message: 'Only the owner can remove images',
+      });
     }
     const img = await this.prisma.sharedSpaceImage.findFirst({
       where: { id: imageId, sharedSpaceId: spaceId },
     });
     if (!img) {
-      throw new NotFoundException({ code: 'RESOURCE_NOT_FOUND', message: 'Image not found' });
+      throw new NotFoundException({
+        code: 'RESOURCE_NOT_FOUND',
+        message: 'Image not found',
+      });
     }
     try {
       await this.storageService.deleteFile(img.imageUrl);
@@ -420,10 +468,16 @@ export class SharedSpacesService {
       include: { owner: { select: { id: true, username: true } } },
     });
     if (!space) {
-      throw new NotFoundException({ code: 'RESOURCE_NOT_FOUND', message: 'Shared space not found' });
+      throw new NotFoundException({
+        code: 'RESOURCE_NOT_FOUND',
+        message: 'Shared space not found',
+      });
     }
     if (space.ownerId === userId) {
-      throw new BadRequestException({ code: 'BAD_REQUEST', message: 'You cannot apply to your own space' });
+      throw new BadRequestException({
+        code: 'BAD_REQUEST',
+        message: 'You cannot apply to your own space',
+      });
     }
     const existing = await this.prisma.sharedSpaceApplication.findUnique({
       where: { sharedSpaceId_userId: { sharedSpaceId: spaceId, userId } },
@@ -459,9 +513,14 @@ export class SharedSpacesService {
   }
 
   async toggleSave(userId: string, spaceId: string) {
-    const space = await this.prisma.sharedSpace.findUnique({ where: { id: spaceId } });
+    const space = await this.prisma.sharedSpace.findUnique({
+      where: { id: spaceId },
+    });
     if (!space) {
-      throw new NotFoundException({ code: 'RESOURCE_NOT_FOUND', message: 'Shared space not found' });
+      throw new NotFoundException({
+        code: 'RESOURCE_NOT_FOUND',
+        message: 'Shared space not found',
+      });
     }
     const row = await this.prisma.sharedSpaceSave.findUnique({
       where: { userId_sharedSpaceId: { userId, sharedSpaceId: spaceId } },
@@ -470,7 +529,9 @@ export class SharedSpacesService {
       await this.prisma.sharedSpaceSave.delete({ where: { id: row.id } });
       return { saved: false };
     }
-    await this.prisma.sharedSpaceSave.create({ data: { userId, sharedSpaceId: spaceId } });
+    await this.prisma.sharedSpaceSave.create({
+      data: { userId, sharedSpaceId: spaceId },
+    });
     return { saved: true };
   }
 }

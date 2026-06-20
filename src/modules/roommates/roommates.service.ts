@@ -123,7 +123,12 @@ export class RoommatesService {
   private async batchConnectionStatuses(
     currentUserId: string,
     targetUserIds: string[],
-  ): Promise<Map<string, { status: RoommateConnectionStatus; conversationId: string | null }>> {
+  ): Promise<
+    Map<
+      string,
+      { status: RoommateConnectionStatus; conversationId: string | null }
+    >
+  > {
     const map = new Map<
       string,
       { status: RoommateConnectionStatus; conversationId: string | null }
@@ -152,7 +157,8 @@ export class RoommatesService {
     for (const c of conversations) {
       if (c.members.length !== 2) continue;
       const otherId = c.members.find((m) => m.userId !== currentUserId)?.userId;
-      if (!otherId || !targetSet.has(otherId) || assigned.has(otherId)) continue;
+      if (!otherId || !targetSet.has(otherId) || assigned.has(otherId))
+        continue;
       const resolved = this.resolvePairConnectionStatus(
         currentUserId,
         c.members,
@@ -167,8 +173,13 @@ export class RoommatesService {
   private async getConnectionStatus(
     currentUserId: string,
     targetUserId: string,
-  ): Promise<{ status: RoommateConnectionStatus; conversationId: string | null }> {
-    const batch = await this.batchConnectionStatuses(currentUserId, [targetUserId]);
+  ): Promise<{
+    status: RoommateConnectionStatus;
+    conversationId: string | null;
+  }> {
+    const batch = await this.batchConnectionStatuses(currentUserId, [
+      targetUserId,
+    ]);
     return batch.get(targetUserId) ?? { status: null, conversationId: null };
   }
 
@@ -198,7 +209,9 @@ export class RoommatesService {
   ): number {
     // Step 1 — Vibe (30%)
     const vibeIdsA = new Set(currentUser.vibes.map((v) => v.id));
-    const sharedVibes = targetUser.vibes.filter((v) => vibeIdsA.has(v.id)).length;
+    const sharedVibes = targetUser.vibes.filter((v) =>
+      vibeIdsA.has(v.id),
+    ).length;
     const rawVibeScore = sharedVibes * VIBE_POINTS_PER;
     const normalizedVibeScore = (rawVibeScore / MAX_VIBE_SCORE) * 100;
     const vibeContrib = normalizedVibeScore * 0.3;
@@ -209,7 +222,8 @@ export class RoommatesService {
       interestIdsA.has(i.id),
     ).length;
     const rawInterestScore = sharedInterests * INTEREST_POINTS_PER;
-    const normalizedInterestScore = (rawInterestScore / MAX_INTEREST_SCORE) * 100;
+    const normalizedInterestScore =
+      (rawInterestScore / MAX_INTEREST_SCORE) * 100;
     const interestContrib = normalizedInterestScore * 0.2;
 
     // Step 3 — Community (25%)
@@ -218,11 +232,13 @@ export class RoommatesService {
       communityIdsA.has(c.id),
     ).length;
     const rawCommunityScore = sharedCommunities * COMMUNITY_POINTS_PER;
-    const maxCommunityScore = Math.max(
-      currentUser.communities.length,
-      targetUser.communities.length,
-    ) * COMMUNITY_POINTS_PER;
-    const cappedMax = Math.min(Math.max(maxCommunityScore, 1), 50);
+    const maxCommunityScore =
+      Math.max(currentUser.communities.length, targetUser.communities.length) *
+      COMMUNITY_POINTS_PER;
+    const cappedMax = Math.min(
+      Math.max(maxCommunityScore, 1),
+      MAX_COMMUNITY_CAP,
+    );
     const normalizedCommunityScore = Math.min(
       (rawCommunityScore / cappedMax) * 100,
       100,
@@ -249,22 +265,29 @@ export class RoommatesService {
     if (prefsA && prefsB) {
       let total = 0;
       if (prefsA.sleepSchedule != null && prefsB.sleepSchedule != null) {
-        total += prefsA.sleepSchedule === prefsB.sleepSchedule ? LIFESTYLE_SLEEP : 0;
+        total +=
+          prefsA.sleepSchedule === prefsB.sleepSchedule ? LIFESTYLE_SLEEP : 0;
       }
       if (prefsA.cleanliness != null && prefsB.cleanliness != null) {
-        total += prefsA.cleanliness === prefsB.cleanliness ? LIFESTYLE_CLEANLINESS : 0;
+        total +=
+          prefsA.cleanliness === prefsB.cleanliness ? LIFESTYLE_CLEANLINESS : 0;
       }
       if (prefsA.noiseTolerance != null && prefsB.noiseTolerance != null) {
-        total += prefsA.noiseTolerance === prefsB.noiseTolerance ? LIFESTYLE_NOISE : 0;
+        total +=
+          prefsA.noiseTolerance === prefsB.noiseTolerance ? LIFESTYLE_NOISE : 0;
       }
       total += prefsA.petFriendly === prefsB.petFriendly ? LIFESTYLE_PET : 0;
-      total += prefsA.smokingAllowed === prefsB.smokingAllowed ? LIFESTYLE_SMOKING : 0;
+      total +=
+        prefsA.smokingAllowed === prefsB.smokingAllowed ? LIFESTYLE_SMOKING : 0;
       if (prefsA.guestsFrequency != null && prefsB.guestsFrequency != null) {
-        total += prefsA.guestsFrequency === prefsB.guestsFrequency ? LIFESTYLE_GUESTS : 0;
+        total +=
+          prefsA.guestsFrequency === prefsB.guestsFrequency
+            ? LIFESTYLE_GUESTS
+            : 0;
       }
       lifestyleScore = total;
     }
-    const lifestyleContrib = lifestyleScore * 0.1;
+    const lifestyleContrib = (lifestyleScore / LIFESTYLE_MAX) * 100 * 0.1;
 
     let score =
       vibeContrib +
@@ -298,15 +321,22 @@ export class RoommatesService {
     if (!prefsA || !prefsB) return 50;
     let total = 0;
     if (prefsA.sleepSchedule != null && prefsB.sleepSchedule != null)
-      total += prefsA.sleepSchedule === prefsB.sleepSchedule ? LIFESTYLE_SLEEP : 0;
+      total +=
+        prefsA.sleepSchedule === prefsB.sleepSchedule ? LIFESTYLE_SLEEP : 0;
     if (prefsA.cleanliness != null && prefsB.cleanliness != null)
-      total += prefsA.cleanliness === prefsB.cleanliness ? LIFESTYLE_CLEANLINESS : 0;
+      total +=
+        prefsA.cleanliness === prefsB.cleanliness ? LIFESTYLE_CLEANLINESS : 0;
     if (prefsA.noiseTolerance != null && prefsB.noiseTolerance != null)
-      total += prefsA.noiseTolerance === prefsB.noiseTolerance ? LIFESTYLE_NOISE : 0;
+      total +=
+        prefsA.noiseTolerance === prefsB.noiseTolerance ? LIFESTYLE_NOISE : 0;
     total += prefsA.petFriendly === prefsB.petFriendly ? LIFESTYLE_PET : 0;
-    total += prefsA.smokingAllowed === prefsB.smokingAllowed ? LIFESTYLE_SMOKING : 0;
+    total +=
+      prefsA.smokingAllowed === prefsB.smokingAllowed ? LIFESTYLE_SMOKING : 0;
     if (prefsA.guestsFrequency != null && prefsB.guestsFrequency != null)
-      total += prefsA.guestsFrequency === prefsB.guestsFrequency ? LIFESTYLE_GUESTS : 0;
+      total +=
+        prefsA.guestsFrequency === prefsB.guestsFrequency
+          ? LIFESTYLE_GUESTS
+          : 0;
     return total;
   }
 
@@ -322,9 +352,15 @@ export class RoommatesService {
     const interestIdsA = new Set(currentUser.interests.map((i) => i.id));
     const communityIdsA = new Set(currentUser.communities.map((c) => c.id));
     const inCommon = {
-      vibes: user.vibes.filter((v) => vibeIdsA.has(v.id)).map((v) => ({ name: v.name, emoji: v.emoji })),
-      interests: user.interests.filter((i) => interestIdsA.has(i.id)).map((i) => ({ name: i.name, icon: i.icon })),
-      communities: user.communities.filter((c) => communityIdsA.has(c.id)).map((c) => ({ name: c.name, emoji: c.emoji })),
+      vibes: user.vibes
+        .filter((v) => vibeIdsA.has(v.id))
+        .map((v) => ({ name: v.name, emoji: v.emoji })),
+      interests: user.interests
+        .filter((i) => interestIdsA.has(i.id))
+        .map((i) => ({ name: i.name, icon: i.icon })),
+      communities: user.communities
+        .filter((c) => communityIdsA.has(c.id))
+        .map((c) => ({ name: c.name, emoji: c.emoji })),
     };
     const prefs = user.roommatePreferences;
     return {
@@ -335,8 +371,16 @@ export class RoommatesService {
       bio: user.bio,
       city: user.location?.city ?? null,
       compatibilityScore,
-      vibes: (user.vibes ?? []).map((v) => ({ slug: v.slug, name: v.name, emoji: v.emoji })), // SPRINT-28
-      communities: (user.communities ?? []).map((c) => ({ slug: c.slug, name: c.name, emoji: c.emoji })), // SPRINT-28
+      vibes: (user.vibes ?? []).map((v) => ({
+        slug: v.slug,
+        name: v.name,
+        emoji: v.emoji,
+      })), // SPRINT-28
+      communities: (user.communities ?? []).map((c) => ({
+        slug: c.slug,
+        name: c.name,
+        emoji: c.emoji,
+      })), // SPRINT-28
       preferences: prefs
         ? {
             budgetMin: prefs.budgetMin,
@@ -371,7 +415,9 @@ export class RoommatesService {
       include: {
         vibes: { select: { id: true, slug: true, name: true, emoji: true } }, // SPRINT-28: slug
         interests: { select: { id: true, name: true, icon: true } },
-        communities: { select: { id: true, slug: true, name: true, emoji: true } }, // SPRINT-28: slug
+        communities: {
+          select: { id: true, slug: true, name: true, emoji: true },
+        }, // SPRINT-28: slug
         location: { select: { city: true, state: true, country: true } },
         roommatePreferences: true,
         userBadges: { select: { badgeType: true } },
@@ -384,8 +430,7 @@ export class RoommatesService {
       });
     }
 
-    const cityValue =
-      query.city ?? currentUser.location?.city ?? undefined;
+    const cityValue = query.city ?? currentUser.location?.city ?? undefined;
     const where: any = {
       id: { not: userId },
       isActive: true,
@@ -409,7 +454,9 @@ export class RoommatesService {
       include: {
         vibes: { select: { id: true, slug: true, name: true, emoji: true } }, // SPRINT-28: slug
         interests: { select: { id: true, name: true, icon: true } },
-        communities: { select: { id: true, slug: true, name: true, emoji: true } }, // SPRINT-28: slug
+        communities: {
+          select: { id: true, slug: true, name: true, emoji: true },
+        }, // SPRINT-28: slug
         location: { select: { city: true, state: true, country: true } },
         roommatePreferences: true,
         userBadges: { select: { badgeType: true } },
@@ -434,8 +481,12 @@ export class RoommatesService {
       });
     } else if (sort === 'move_in_soon') {
       withScores.sort((a, b) => {
-        const dA = a.user.roommatePreferences?.moveInDate?.getTime() ?? Number.MAX_SAFE_INTEGER;
-        const dB = b.user.roommatePreferences?.moveInDate?.getTime() ?? Number.MAX_SAFE_INTEGER;
+        const dA =
+          a.user.roommatePreferences?.moveInDate?.getTime() ??
+          Number.MAX_SAFE_INTEGER;
+        const dB =
+          b.user.roommatePreferences?.moveInDate?.getTime() ??
+          Number.MAX_SAFE_INTEGER;
         return dA - dB;
       });
     } else {
@@ -493,7 +544,9 @@ export class RoommatesService {
         include: {
           vibes: { select: { id: true, slug: true, name: true, emoji: true } }, // SPRINT-28: slug
           interests: { select: { id: true, name: true, icon: true } },
-          communities: { select: { id: true, slug: true, name: true, emoji: true } }, // SPRINT-28: slug
+          communities: {
+            select: { id: true, slug: true, name: true, emoji: true },
+          }, // SPRINT-28: slug
           location: { select: { city: true, state: true, country: true } },
           roommatePreferences: true,
           userBadges: { select: { badgeType: true } },
@@ -519,7 +572,9 @@ export class RoommatesService {
       include: {
         vibes: { select: { id: true, slug: true, name: true, emoji: true } }, // SPRINT-28: slug
         interests: { select: { id: true, name: true, icon: true } },
-        communities: { select: { id: true, slug: true, name: true, emoji: true } }, // SPRINT-28: slug
+        communities: {
+          select: { id: true, slug: true, name: true, emoji: true },
+        }, // SPRINT-28: slug
         location: { select: { city: true, state: true, country: true } },
         roommatePreferences: true,
         userBadges: { select: { badgeType: true } },
@@ -588,13 +643,23 @@ export class RoommatesService {
         ...(dto.moveInDate !== undefined && {
           moveInDate: dto.moveInDate ? new Date(dto.moveInDate) : null,
         }),
-        ...(dto.sleepSchedule !== undefined && { sleepSchedule: dto.sleepSchedule }),
+        ...(dto.sleepSchedule !== undefined && {
+          sleepSchedule: dto.sleepSchedule,
+        }),
         ...(dto.cleanliness !== undefined && { cleanliness: dto.cleanliness }),
-        ...(dto.noiseTolerance !== undefined && { noiseTolerance: dto.noiseTolerance }),
+        ...(dto.noiseTolerance !== undefined && {
+          noiseTolerance: dto.noiseTolerance,
+        }),
         ...(dto.petFriendly !== undefined && { petFriendly: dto.petFriendly }),
-        ...(dto.smokingAllowed !== undefined && { smokingAllowed: dto.smokingAllowed }),
-        ...(dto.guestsFrequency !== undefined && { guestsFrequency: dto.guestsFrequency }),
-        ...(dto.workFromHome !== undefined && { workFromHome: dto.workFromHome }),
+        ...(dto.smokingAllowed !== undefined && {
+          smokingAllowed: dto.smokingAllowed,
+        }),
+        ...(dto.guestsFrequency !== undefined && {
+          guestsFrequency: dto.guestsFrequency,
+        }),
+        ...(dto.workFromHome !== undefined && {
+          workFromHome: dto.workFromHome,
+        }),
         ...(dto.aboutMe !== undefined && { aboutMe: dto.aboutMe }),
         ...(dto.isLooking !== undefined && { isLooking: dto.isLooking }),
       },
@@ -641,7 +706,9 @@ export class RoommatesService {
     });
     const existingConv = directConversations.find((c) => {
       const ids = c.members.map((m) => m.userId).sort();
-      return ids.length === 2 && ids[0] === memberIds[0] && ids[1] === memberIds[1];
+      return (
+        ids.length === 2 && ids[0] === memberIds[0] && ids[1] === memberIds[1]
+      );
     });
     if (existingConv) {
       return {
@@ -660,7 +727,12 @@ export class RoommatesService {
       });
       await tx.conversationMember.createMany({
         data: [
-          { conversationId: conv.id, userId, role: 'MEMBER', status: 'ACCEPTED' },
+          {
+            conversationId: conv.id,
+            userId,
+            role: 'MEMBER',
+            status: 'ACCEPTED',
+          },
           {
             conversationId: conv.id,
             userId: roommateId,
@@ -833,7 +905,9 @@ export class RoommatesService {
     }
   }
 
-  async getMyRoommateListing(userId: string): Promise<Record<string, unknown> | null> {
+  async getMyRoommateListing(
+    userId: string,
+  ): Promise<Record<string, unknown> | null> {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       include: {
@@ -845,8 +919,7 @@ export class RoommatesService {
     if (!user?.roommatePreferences?.isLooking) return null;
     const prefs = user.roommatePreferences;
     const about =
-      prefs.aboutMe ??
-      (user.bio ? String(user.bio).slice(0, 500) : undefined);
+      prefs.aboutMe ?? (user.bio ? String(user.bio).slice(0, 500) : undefined);
     return {
       id: user.id,
       userId: user.id,
@@ -867,7 +940,9 @@ export class RoommatesService {
       verified: user.userBadges.length > 0,
       bio: about,
       createdAt: user.createdAt.toISOString(),
-      updatedAt: prefs.id ? user.updatedAt.toISOString() : new Date().toISOString(),
+      updatedAt: prefs.id
+        ? user.updatedAt.toISOString()
+        : new Date().toISOString(),
     };
   }
 
@@ -910,10 +985,13 @@ export class RoommatesService {
     if (dto.moveInDate !== undefined) upd.moveInDate = dto.moveInDate;
     if (dto.sleepSchedule !== undefined) upd.sleepSchedule = dto.sleepSchedule;
     if (dto.cleanliness !== undefined) upd.cleanliness = dto.cleanliness;
-    if (dto.noiseTolerance !== undefined) upd.noiseTolerance = dto.noiseTolerance;
+    if (dto.noiseTolerance !== undefined)
+      upd.noiseTolerance = dto.noiseTolerance;
     if (dto.petFriendly !== undefined) upd.petFriendly = dto.petFriendly;
-    if (dto.smokingAllowed !== undefined) upd.smokingAllowed = dto.smokingAllowed;
-    if (dto.guestsFrequency !== undefined) upd.guestsFrequency = dto.guestsFrequency;
+    if (dto.smokingAllowed !== undefined)
+      upd.smokingAllowed = dto.smokingAllowed;
+    if (dto.guestsFrequency !== undefined)
+      upd.guestsFrequency = dto.guestsFrequency;
     if (dto.workFromHome !== undefined) upd.workFromHome = dto.workFromHome;
     if (aboutMeMerged !== undefined) upd.aboutMe = aboutMeMerged;
     if (dto.isLooking !== undefined) upd.isLooking = dto.isLooking;
@@ -981,7 +1059,9 @@ export class RoommatesService {
       include: {
         vibes: { select: { id: true, slug: true, name: true, emoji: true } }, // SPRINT-28: slug
         interests: { select: { id: true, name: true, icon: true } },
-        communities: { select: { id: true, slug: true, name: true, emoji: true } }, // SPRINT-28: slug
+        communities: {
+          select: { id: true, slug: true, name: true, emoji: true },
+        }, // SPRINT-28: slug
         location: { select: { city: true, state: true, country: true } },
         roommatePreferences: true,
         userBadges: { select: { badgeType: true } },
@@ -1004,9 +1084,13 @@ export class RoommatesService {
             include: {
               location: { select: { city: true, state: true, country: true } },
               roommatePreferences: true,
-              vibes: { select: { id: true, slug: true, name: true, emoji: true } }, // SPRINT-28: slug
+              vibes: {
+                select: { id: true, slug: true, name: true, emoji: true },
+              }, // SPRINT-28: slug
               interests: { select: { id: true, name: true, icon: true } },
-              communities: { select: { id: true, slug: true, name: true, emoji: true } }, // SPRINT-28: slug
+              communities: {
+                select: { id: true, slug: true, name: true, emoji: true },
+              }, // SPRINT-28: slug
               userBadges: { select: { badgeType: true } },
             },
           },
@@ -1036,4 +1120,3 @@ export class RoommatesService {
     return { data, meta: createPaginationMeta(page, limit, total) };
   }
 }
-

@@ -11,7 +11,8 @@ export interface RssNewsArticle {
   category: string;
 }
 
-const STATE_NEWS_PHRASINGS = [ // SPRINT-30
+const STATE_NEWS_PHRASINGS = [
+  // SPRINT-30
   '{state} news today',
   '{state} latest headlines',
   '{state} breaking news',
@@ -82,7 +83,10 @@ export function getTimeBucket(): string {
   const month = String(now.getUTCMonth() + 1).padStart(2, '0');
   const day = String(now.getUTCDate()).padStart(2, '0');
   const hour = String(now.getUTCHours()).padStart(2, '0');
-  const minute = String(Math.floor(now.getUTCMinutes() / 15) * 15).padStart(2, '0');
+  const minute = String(Math.floor(now.getUTCMinutes() / 15) * 15).padStart(
+    2,
+    '0',
+  );
   return `${year}-${month}-${day} ${hour}:${minute}`;
 }
 
@@ -97,8 +101,15 @@ function phraseAt(phrases: string[], index: number): string {
   return phrases[idx] ?? phrases[0] ?? '';
 }
 
-export function buildLocalNewsQuery(cityName: string, rotationIndex: number, timeBucket: string): string {
-  const phrase = phraseAt(LOCAL_NEWS_PHRASINGS, rotationIndex).replace('{city}', cityName);
+export function buildLocalNewsQuery(
+  cityName: string,
+  rotationIndex: number,
+  timeBucket: string,
+): string {
+  const phrase = phraseAt(LOCAL_NEWS_PHRASINGS, rotationIndex).replace(
+    '{city}',
+    cityName,
+  );
   return `${phrase} ${timeBucket}`;
 }
 
@@ -107,7 +118,10 @@ export function buildNationalNewsQuery(
   rotationIndex: number,
   timeBucket: string,
 ): string {
-  const phrase = phraseAt(NATIONAL_NEWS_PHRASINGS, rotationIndex).replace('{country}', countryName);
+  const phrase = phraseAt(NATIONAL_NEWS_PHRASINGS, rotationIndex).replace(
+    '{country}',
+    countryName,
+  );
   return `${phrase} ${timeBucket}`;
 }
 
@@ -117,7 +131,10 @@ export function buildStateNewsQuery(
   rotationIndex: number,
   timeBucket: string,
 ): string {
-  const phrase = phraseAt(STATE_NEWS_PHRASINGS, rotationIndex).replace('{state}', stateName);
+  const phrase = phraseAt(STATE_NEWS_PHRASINGS, rotationIndex).replace(
+    '{state}',
+    stateName,
+  );
   return `${phrase} ${timeBucket}`;
 }
 
@@ -203,7 +220,10 @@ function isSameContent(a: string, b: string): boolean {
   const cleanB = b.toLowerCase().replace(/[^a-z0-9]/g, '');
   if (cleanA === cleanB) return true;
   if (cleanA.length > 10 && cleanB.length > 10) {
-    if (cleanA.startsWith(cleanB.slice(0, 30)) || cleanB.startsWith(cleanA.slice(0, 30)))
+    if (
+      cleanA.startsWith(cleanB.slice(0, 30)) ||
+      cleanB.startsWith(cleanA.slice(0, 30))
+    )
       return true;
   }
   return false;
@@ -236,7 +256,8 @@ function firstImgSrcFromHtml(html: string): string | null {
   const m = decoded.match(/<img[^>]+src=["'](https?:\/\/[^"']+)["']/i);
   if (m && !m[1].includes('news.google.com')) return m[1];
   const m2 = decoded.match(/<img[^>]+src=(https?:\/\/[^\s>]+)/i);
-  if (m2 && !m2[1].includes('news.google.com')) return m2[1].replace(/["']/g, '');
+  if (m2 && !m2[1].includes('news.google.com'))
+    return m2[1].replace(/["']/g, '');
   return null;
 }
 
@@ -244,11 +265,16 @@ function extractImage(itemXml: string): string | null {
   const mediaMatch = itemXml.match(
     /url="(https?:\/\/[^"]+\.(?:jpg|jpeg|png|gif|webp|svg)[^"]*)"/i,
   );
-  if (mediaMatch && !mediaMatch[1].includes('news.google.com')) return mediaMatch[1];
-  const mediaMatch2 = itemXml.match(/<media:content[^>]+url="(https?:\/\/[^"]+)"/i);
+  if (mediaMatch && !mediaMatch[1].includes('news.google.com'))
+    return mediaMatch[1];
+  const mediaMatch2 = itemXml.match(
+    /<media:content[^>]+url="(https?:\/\/[^"]+)"/i,
+  );
   if (mediaMatch2 && !mediaMatch2[1].includes('news.google.com'))
     return mediaMatch2[1];
-  const thumbMatch = itemXml.match(/<media:thumbnail[^>]+url="(https?:\/\/[^"]+)"/i);
+  const thumbMatch = itemXml.match(
+    /<media:thumbnail[^>]+url="(https?:\/\/[^"]+)"/i,
+  );
   if (thumbMatch && !thumbMatch[1].includes('news.google.com'))
     return thumbMatch[1];
   const encMatch = itemXml.match(/<enclosure[^>]+url="(https?:\/\/[^"]+)"/i);
@@ -286,7 +312,7 @@ export async function fetchGoogleNewsRSS(
 ): Promise<RssNewsArticle[]> {
   try {
     const encoded = encodeURIComponent(query);
-    const url = `https://news.google.com/rss/search?q=${ encoded }&hl=${ hl }&gl=${ gl }&ceid=${ gl }:${ hl.split('-')[0] }`;
+    const url = `https://news.google.com/rss/search?q=${encoded}&hl=${hl}&gl=${gl}&ceid=${gl}:${hl.split('-')[0]}`;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 12_000);
     const resp = await fetch(url, {
@@ -317,8 +343,7 @@ export async function fetchGoogleNewsRSS(
       return {
         id,
         title: cleanTitle,
-        description:
-          desc.length > 300 ? desc.slice(0, 300) + '…' : desc,
+        description: desc.length > 300 ? desc.slice(0, 300) + '…' : desc,
         url: link,
         image,
         source: source.trim(),
@@ -341,6 +366,8 @@ export function decodeGoogleNewsUrl(googleUrl: string): string | null {
     const decoded = Buffer.from(b64, 'base64').toString('binary');
     const httpsIdx = decoded.indexOf('https://');
     if (httpsIdx !== -1) {
+      // Strip control characters after the decoded URL prefix.
+      // eslint-disable-next-line no-control-regex
       return decoded.slice(httpsIdx).replace(/[\x00-\x1F\x7F].*/s, '');
     }
     return null;
@@ -401,14 +428,18 @@ export async function fetchOgImage(articleUrl: string): Promise<string | null> {
  * Fills `image` for up to the first 30 articles that had `image: null`, in parallel.
  * Preserves order and leaves other articles unchanged.
  */
-export async function enrichArticlesWithImages(articles: RssNewsArticle[]): Promise<RssNewsArticle[]> {
+export async function enrichArticlesWithImages(
+  articles: RssNewsArticle[],
+): Promise<RssNewsArticle[]> {
   const out = articles.map((a) => ({ ...a }));
   const nullIndices: number[] = [];
   for (let i = 0; i < out.length; i++) {
     if (!out[i].image) nullIndices.push(i);
   }
   const batch = nullIndices.slice(0, 30);
-  const settled = await Promise.allSettled(batch.map((idx) => fetchOgImage(out[idx].url)));
+  const settled = await Promise.allSettled(
+    batch.map((idx) => fetchOgImage(out[idx].url)),
+  );
   settled.forEach((r, j) => {
     if (r.status === 'fulfilled' && r.value) {
       const idx = batch[j];
@@ -433,7 +464,11 @@ export async function fetchAllNewsBuckets(
   const timeBucket = getTimeBucket();
   const rotationIndex = rotationSeed ?? getRotationIndex(60);
   const localQuery = buildLocalNewsQuery(cityName, rotationIndex, timeBucket);
-  const nationalQuery = buildNationalNewsQuery(countryName, rotationIndex, timeBucket);
+  const nationalQuery = buildNationalNewsQuery(
+    countryName,
+    rotationIndex,
+    timeBucket,
+  );
   const worldQuery = `${phraseAt(WORLD_NEWS_PHRASINGS, rotationIndex)} ${timeBucket}`;
   const businessQuery = `${phraseAt(BUSINESS_PHRASINGS, rotationIndex)} ${timeBucket}`;
   const technologyQuery = `${phraseAt(TECHNOLOGY_PHRASINGS, rotationIndex)} ${timeBucket}`;

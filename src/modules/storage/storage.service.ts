@@ -15,14 +15,78 @@ const ALLOWED_MIME_TYPES = [
 ];
 
 const MAGIC: Array<{ mime: string; check: (buf: Buffer) => boolean }> = [
-  { mime: 'image/jpeg', check: (b) => b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff },
-  { mime: 'image/png', check: (b) => b.length >= 8 && b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47 },
-  { mime: 'image/gif', check: (b) => b.length >= 6 && b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x38 },
-  { mime: 'application/pdf', check: (b) => b.length >= 4 && b[0] === 0x25 && b[1] === 0x50 && b[2] === 0x44 && b[3] === 0x46 },
-  { mime: 'image/webp', check: (b) => b.length >= 12 && b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 && b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50 },
-  { mime: 'video/mp4', check: (b) => b.length >= 8 && b[4] === 0x66 && b[5] === 0x74 && b[6] === 0x79 && b[7] === 0x70 },
-  { mime: 'video/webm', check: (b) => b.length >= 4 && b[0] === 0x1a && b[1] === 0x45 && b[2] === 0xdf && b[3] === 0xa3 },
-  { mime: 'video/quicktime', check: (b) => b.length >= 8 && b[4] === 0x66 && b[5] === 0x74 && b[6] === 0x79 && b[7] === 0x71 },
+  {
+    mime: 'image/jpeg',
+    check: (b) =>
+      b.length >= 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff,
+  },
+  {
+    mime: 'image/png',
+    check: (b) =>
+      b.length >= 8 &&
+      b[0] === 0x89 &&
+      b[1] === 0x50 &&
+      b[2] === 0x4e &&
+      b[3] === 0x47,
+  },
+  {
+    mime: 'image/gif',
+    check: (b) =>
+      b.length >= 6 &&
+      b[0] === 0x47 &&
+      b[1] === 0x49 &&
+      b[2] === 0x46 &&
+      b[3] === 0x38,
+  },
+  {
+    mime: 'application/pdf',
+    check: (b) =>
+      b.length >= 4 &&
+      b[0] === 0x25 &&
+      b[1] === 0x50 &&
+      b[2] === 0x44 &&
+      b[3] === 0x46,
+  },
+  {
+    mime: 'image/webp',
+    check: (b) =>
+      b.length >= 12 &&
+      b[0] === 0x52 &&
+      b[1] === 0x49 &&
+      b[2] === 0x46 &&
+      b[3] === 0x46 &&
+      b[8] === 0x57 &&
+      b[9] === 0x45 &&
+      b[10] === 0x42 &&
+      b[11] === 0x50,
+  },
+  {
+    mime: 'video/mp4',
+    check: (b) =>
+      b.length >= 8 &&
+      b[4] === 0x66 &&
+      b[5] === 0x74 &&
+      b[6] === 0x79 &&
+      b[7] === 0x70,
+  },
+  {
+    mime: 'video/webm',
+    check: (b) =>
+      b.length >= 4 &&
+      b[0] === 0x1a &&
+      b[1] === 0x45 &&
+      b[2] === 0xdf &&
+      b[3] === 0xa3,
+  },
+  {
+    mime: 'video/quicktime',
+    check: (b) =>
+      b.length >= 8 &&
+      b[4] === 0x66 &&
+      b[5] === 0x74 &&
+      b[6] === 0x79 &&
+      b[7] === 0x71,
+  },
 ];
 
 const CLOUDINARY_URL_PATTERN =
@@ -40,7 +104,10 @@ export class StorageService {
   private readonly cloudName: string;
 
   constructor(private readonly configService: ConfigService) {
-    this.cloudName = this.configService.get<string>('CLOUDINARY_CLOUD_NAME', '');
+    this.cloudName = this.configService.get<string>(
+      'CLOUDINARY_CLOUD_NAME',
+      '',
+    );
     cloudinary.config({
       cloud_name: this.cloudName,
       api_key: this.configService.get<string>('CLOUDINARY_API_KEY', ''),
@@ -102,11 +169,11 @@ export class StorageService {
     return null;
   }
 
-  async getReadUrlForClient(
+  getReadUrlForClient(
     stored: string | null | undefined,
     _expiresInSeconds = 7200,
   ): Promise<string> {
-    return this.resolvePublicUrl(stored);
+    return Promise.resolve(this.resolvePublicUrl(stored));
   }
 
   private resourceTypeFromMime(mimeType: string): 'image' | 'video' {
@@ -149,8 +216,14 @@ export class StorageService {
           overwrite: true,
         },
         (error, result) => {
-          if (error) reject(error);
-          else if (!result) reject(new Error('Cloudinary upload returned no result'));
+          if (error) {
+            const message =
+              error instanceof Error
+                ? error.message
+                : 'Cloudinary upload failed';
+            reject(new Error(message));
+          } else if (!result)
+            reject(new Error('Cloudinary upload returned no result'));
           else resolve(result);
         },
       );
@@ -187,11 +260,17 @@ export class StorageService {
     const authoritativeMimeType = this.validateMime(buffer, mimeType);
     const publicId = `${folder}/${fileUuid}`;
     const resourceType = this.resourceTypeFromMime(authoritativeMimeType);
-    await this.uploadBuffer(buffer, authoritativeMimeType, publicId, extension, 'private');
+    await this.uploadBuffer(
+      buffer,
+      authoritativeMimeType,
+      publicId,
+      extension,
+      'private',
+    );
     return `${resourceType}:${extension}:${publicId}`;
   }
 
-  async getSignedUrl(objectKey: string, expiresInSeconds: number): Promise<string> {
+  getSignedUrl(objectKey: string, expiresInSeconds: number): Promise<string> {
     const parts = objectKey.split(':');
     if (parts.length !== 3) {
       throw new BadRequestException({
@@ -201,20 +280,26 @@ export class StorageService {
     }
     const [resourceType, extension, publicId] = parts;
     const expiresAt = Math.floor(Date.now() / 1000) + expiresInSeconds;
-    return cloudinary.utils.private_download_url(publicId, extension, {
-      resource_type: resourceType,
-      type: 'private',
-      expires_at: expiresAt,
-    });
+    return Promise.resolve(
+      cloudinary.utils.private_download_url(publicId, extension, {
+        resource_type: resourceType,
+        type: 'private',
+        expires_at: expiresAt,
+      }),
+    );
   }
 
-  private parseCloudinaryUrl(url: string): { resourceType: string; publicId: string; type: 'upload' | 'private' } | null {
+  private parseCloudinaryUrl(url: string): {
+    resourceType: string;
+    publicId: string;
+    type: 'upload' | 'private';
+  } | null {
     const match = url.match(CLOUDINARY_URL_PATTERN);
     if (!match) return null;
     const deliverySegment = url.includes('/private/') ? 'private' : 'upload';
     return {
-      resourceType: match[1]!,
-      publicId: match[2]!,
+      resourceType: match[1],
+      publicId: match[2],
       type: deliverySegment === 'private' ? 'private' : 'upload',
     };
   }

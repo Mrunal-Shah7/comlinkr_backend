@@ -13,7 +13,12 @@ import {
   Min,
   MinLength,
 } from 'class-validator';
-import { FurnishedStatus, NoiseTolerance, RoomType, SleepSchedule } from '@prisma/client'; // SPRINT-28
+import {
+  FurnishedStatus,
+  NoiseTolerance,
+  RoomType,
+  SleepSchedule,
+} from '@prisma/client'; // SPRINT-28
 
 export class CreateSharedSpaceDto {
   @IsString()

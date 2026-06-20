@@ -10,4 +10,3 @@ import { StoriesCronService } from './stories.cron';
   providers: [StoriesService, StoriesCronService],
 })
 export class StoriesModule {}
-

@@ -56,7 +56,10 @@ export class BadgesController {
     schema: {
       type: 'object',
       properties: {
-        badgeType: { type: 'string', enum: ['LANDLORD', 'RESTAURANT_OWNER', 'AGENCY', 'LOCAL_REVIEWER'] },
+        badgeType: {
+          type: 'string',
+          enum: ['LANDLORD', 'RESTAURANT_OWNER', 'AGENCY', 'LOCAL_REVIEWER'],
+        },
         fullLegalName: { type: 'string' },
         businessPhone: { type: 'string' },
         businessEmail: { type: 'string' },
@@ -68,7 +71,10 @@ export class BadgesController {
         agencyLicense: { type: 'string' },
         neighborhoodArea: { type: 'string' },
         reviewerBio: { type: 'string' },
-        documents: { type: 'array', items: { type: 'string', format: 'binary' } },
+        documents: {
+          type: 'array',
+          items: { type: 'string', format: 'binary' },
+        },
       },
     },
   })

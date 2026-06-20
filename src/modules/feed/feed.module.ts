@@ -9,4 +9,3 @@ import { FeedController } from './feed.controller';
   controllers: [FeedController],
 })
 export class FeedModule {}
-

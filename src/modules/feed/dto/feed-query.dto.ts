@@ -18,4 +18,3 @@ export class FeedQueryDto extends PaginationDto {
   @Type(() => String)
   trending?: string;
 }
-

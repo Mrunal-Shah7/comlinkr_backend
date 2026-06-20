@@ -33,7 +33,9 @@ export class EventsService {
   ) {}
 
   /** Readable URL for clients (presigned when bucket objects are private). */
-  private async buildFileUrl(imageUrl: string | null | undefined): Promise<string> {
+  private async buildFileUrl(
+    imageUrl: string | null | undefined,
+  ): Promise<string> {
     if (imageUrl == null || imageUrl === '') return '';
     return this.storageService.getReadUrlForClient(imageUrl);
   }
@@ -52,10 +54,8 @@ export class EventsService {
     const isFull = capacity != null && attendeeCount >= capacity;
     const spotsLeft =
       capacity != null ? Math.max(0, capacity - attendeeCount) : null;
-    const isAttending =
-      currentUserId && (event.attendees?.length ?? 0) > 0;
-    const savedByMe =
-      currentUserId && (event.saves?.length ?? 0) > 0;
+    const isAttending = currentUserId && (event.attendees?.length ?? 0) > 0;
+    const savedByMe = currentUserId && (event.saves?.length ?? 0) > 0;
     const isSaved = !!savedByMe;
     const imageRows = event.eventImages ?? [];
     const sortedImages = [...imageRows].sort(
@@ -92,9 +92,11 @@ export class EventsService {
         avatarUrl: event.author.avatarUrl
           ? await this.buildFileUrl(event.author.avatarUrl)
           : null,
-        badges: (event.author.userBadges ?? []).map((b: { badgeType: string }) => ({
-          badgeType: b.badgeType,
-        })),
+        badges: (event.author.userBadges ?? []).map(
+          (b: { badgeType: string }) => ({
+            badgeType: b.badgeType,
+          }),
+        ),
       },
       isAttending: !!isAttending,
       /** Mobile alias for RSVP state */
@@ -278,7 +280,12 @@ export class EventsService {
         eventImages: { orderBy: { order: 'asc' } },
       },
     });
-    this.notifyEventNearby(created.id, created.title, created.city, userId).catch(() => {});
+    this.notifyEventNearby(
+      created.id,
+      created.title,
+      created.city,
+      userId,
+    ).catch(() => {});
     return await this.formatEvent(created, userId);
   }
 
@@ -349,9 +356,17 @@ export class EventsService {
     return results;
   }
 
-  private async notifyEventNearby(eventId: string, eventTitle: string, city: string, excludeUserId: string) {
+  private async notifyEventNearby(
+    eventId: string,
+    eventTitle: string,
+    city: string,
+    excludeUserId: string,
+  ) {
     const usersInCity = await this.prisma.userLocation.findMany({
-      where: { city: { equals: city, mode: 'insensitive' }, userId: { not: excludeUserId } },
+      where: {
+        city: { equals: city, mode: 'insensitive' },
+        userId: { not: excludeUserId },
+      },
       select: { userId: true },
     });
     await Promise.all(
@@ -369,7 +384,8 @@ export class EventsService {
   }
 
   async attendEvent(userId: string, eventId: string, dto: AttendEventDto = {}) {
-    const tickets = dto.ticketCount != null && dto.ticketCount > 0 ? dto.ticketCount : 1;
+    const tickets =
+      dto.ticketCount != null && dto.ticketCount > 0 ? dto.ticketCount : 1;
     const event = await this.prisma.event.findUnique({
       where: { id: eventId },
       include: {
@@ -446,7 +462,10 @@ export class EventsService {
           };
         }
 
-        if (fresh.capacity != null && fresh.attendeeCount + tickets > fresh.capacity) {
+        if (
+          fresh.capacity != null &&
+          fresh.attendeeCount + tickets > fresh.capacity
+        ) {
           const left = Math.max(0, fresh.capacity - fresh.attendeeCount);
           throw new BadRequestException({
             code: 'BAD_REQUEST',
@@ -677,7 +696,11 @@ export class EventsService {
   }
 
   /** Mobile: same as attend; response uses { registered, attendees }. */
-  async registerForEvent(userId: string, eventId: string, dto: AttendEventDto = {}) {
+  async registerForEvent(
+    userId: string,
+    eventId: string,
+    dto: AttendEventDto = {},
+  ) {
     const r = await this.attendEvent(userId, eventId, dto);
     return {
       registered: r.attending,
@@ -738,10 +761,9 @@ export class EventsService {
         date: e.date.toISOString().slice(0, 10),
         time: e.startTime,
         location: e.venue,
-        image:
-          e.eventImages[0]?.imageUrl
-            ? await this.buildFileUrl(e.eventImages[0].imageUrl)
-            : (undefined as string | undefined),
+        image: e.eventImages[0]?.imageUrl
+          ? await this.buildFileUrl(e.eventImages[0].imageUrl)
+          : (undefined as string | undefined),
         attendees: e.attendeeCount,
         price: e.ticketPrice != null ? Number(e.ticketPrice) : null,
         tags: [] as string[],
@@ -835,7 +857,9 @@ export class EventsService {
   }
 
   async toggleSaveEvent(userId: string, eventId: string) {
-    const event = await this.prisma.event.findUnique({ where: { id: eventId } });
+    const event = await this.prisma.event.findUnique({
+      where: { id: eventId },
+    });
     if (!event) {
       throw new NotFoundException({
         code: 'RESOURCE_NOT_FOUND',
@@ -854,7 +878,9 @@ export class EventsService {
   }
 
   async reportEvent(userId: string, eventId: string, reason: string) {
-    const event = await this.prisma.event.findUnique({ where: { id: eventId } });
+    const event = await this.prisma.event.findUnique({
+      where: { id: eventId },
+    });
     if (!event) {
       throw new NotFoundException({
         code: 'RESOURCE_NOT_FOUND',
@@ -873,7 +899,9 @@ export class EventsService {
   }
 
   async updateEvent(userId: string, eventId: string, dto: UpdateEventDto) {
-    const event = await this.prisma.event.findUnique({ where: { id: eventId } });
+    const event = await this.prisma.event.findUnique({
+      where: { id: eventId },
+    });
     if (!event) {
       throw new NotFoundException({
         code: 'RESOURCE_NOT_FOUND',
@@ -921,7 +949,9 @@ export class EventsService {
   }
 
   async deleteEvent(userId: string, eventId: string) {
-    const event = await this.prisma.event.findUnique({ where: { id: eventId } });
+    const event = await this.prisma.event.findUnique({
+      where: { id: eventId },
+    });
     if (!event) {
       throw new NotFoundException({
         code: 'RESOURCE_NOT_FOUND',
@@ -1006,7 +1036,10 @@ export class EventsService {
     const event = await this.prisma.event.findUnique({
       where: { id: eventId },
       include: {
-        attendees: { where: { userId }, select: { id: true, joinedAt: true, ticketCount: true } },
+        attendees: {
+          where: { userId },
+          select: { id: true, joinedAt: true, ticketCount: true },
+        },
         author: { select: { fullName: true } },
       },
     });
@@ -1052,5 +1085,3 @@ export class EventsService {
     };
   }
 }
-
-

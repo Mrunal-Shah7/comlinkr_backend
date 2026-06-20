@@ -12,12 +12,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
-import {
-  ApiConsumes,
-  ApiOperation,
-  ApiQuery,
-  ApiTags,
-} from '@nestjs/swagger';
+import { ApiConsumes, ApiOperation, ApiQuery, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { SharedSpacesService } from './shared-spaces.service';
 import { CreateSharedSpaceDto } from './dto/create-shared-space.dto';
@@ -39,7 +34,10 @@ export class SharedSpacesController {
   @ApiQuery({ name: 'petFriendly', required: false })
   @ApiQuery({ name: 'page', required: false })
   @ApiQuery({ name: 'limit', required: false })
-  list(@CurrentUser('id') userId: string, @Query() query: SharedSpacesQueryDto) {
+  list(
+    @CurrentUser('id') userId: string,
+    @Query() query: SharedSpacesQueryDto,
+  ) {
     return this.sharedSpacesService.getSharedSpaces(userId, query);
   }
 
@@ -92,7 +90,10 @@ export class SharedSpacesController {
   ) {
     const list = files ?? [];
     if (list.length === 0) {
-      throw new BadRequestException({ code: 'BAD_REQUEST', message: 'No files uploaded' });
+      throw new BadRequestException({
+        code: 'BAD_REQUEST',
+        message: 'No files uploaded',
+      });
     }
     return this.sharedSpacesService.uploadImages(userId, id, list);
   }

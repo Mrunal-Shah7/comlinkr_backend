@@ -3,7 +3,8 @@ import { IsBoolean, Equals } from 'class-validator';
 
 export class AcceptAgreementDto {
   @ApiProperty({
-    description: 'Must be true to accept Terms, Privacy Policy, and Community Guidelines',
+    description:
+      'Must be true to accept Terms, Privacy Policy, and Community Guidelines',
     example: true,
   })
   @IsBoolean()

@@ -30,7 +30,9 @@ export class SettingsCronService {
       }
     }
     if (deleted > 0) {
-      this.logger.log(`Account hard-delete: permanently deleted ${deleted} user(s).`);
+      this.logger.log(
+        `Account hard-delete: permanently deleted ${deleted} user(s).`,
+      );
     }
   }
 }

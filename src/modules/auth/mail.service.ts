@@ -1,6 +1,9 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { createMailTransporter, resolveSmtpSettings } from '../../config/mail.config';
+import {
+  createMailTransporter,
+  resolveSmtpSettings,
+} from '../../config/mail.config';
 
 @Injectable()
 export class MailService {
@@ -11,19 +14,20 @@ export class MailService {
     code: string,
     type: 'REGISTRATION' | 'PASSWORD_RESET',
   ): Promise<void> {
-    const { user: smtpUser, pass: smtpPass, fromEmail } = resolveSmtpSettings(
-      this.configService,
-    );
+    const {
+      user: smtpUser,
+      pass: smtpPass,
+      fromEmail,
+    } = resolveSmtpSettings(this.configService);
     const isDev = this.configService.get<string>('NODE_ENV') === 'development';
     const credentialsMissing =
-      !smtpUser ||
-      !smtpPass ||
-      !fromEmail ||
-      smtpPass === 'placeholder';
+      !smtpUser || !smtpPass || !fromEmail || smtpPass === 'placeholder';
 
     if (credentialsMissing) {
       if (isDev) {
-        console.log(`[DEV] No SMTP credentials — OTP logged only: ${to} (${type}): ${code}`);
+        console.log(
+          `[DEV] No SMTP credentials — OTP logged only: ${to} (${type}): ${code}`,
+        );
       }
       return;
     }
@@ -69,7 +73,9 @@ export class MailService {
     } catch (err) {
       console.error('Failed to send OTP email:', err);
       if (isDev) {
-        console.log(`[DEV] OTP (use this if email failed): ${to} (${type}): ${code}`);
+        console.log(
+          `[DEV] OTP (use this if email failed): ${to} (${type}): ${code}`,
+        );
       }
       // Do not throw — OTP is saved; user can request a new one.
     }

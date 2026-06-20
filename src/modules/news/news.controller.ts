@@ -1,4 +1,12 @@
-import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Query,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiOperation, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { NewsService } from './news.service';
 import { NewsExploreQueryDto } from './dto/news-explore-query.dto';
@@ -23,7 +31,10 @@ export class NewsController {
   @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
   @ApiQuery({ name: 'pageSize', required: false, type: Number, example: 20 })
   @ApiQuery({ name: 'state', required: false, type: String }) // SPRINT-30
-  @ApiResponse({ status: 200, description: 'Deduped articles + cache timestamp' })
+  @ApiResponse({
+    status: 200,
+    description: 'Deduped articles + cache timestamp',
+  })
   async explore(@Query() query: NewsExploreQueryDto) {
     const page = query.page ?? 1;
     const pageSize = query.pageSize ?? 20;

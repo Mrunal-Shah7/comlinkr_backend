@@ -7,10 +7,14 @@ import {
 import { randomUUID } from 'crypto';
 import { ModuleRef } from '@nestjs/core';
 import { NotificationsService } from '../notifications/notifications.service';
-import { ConversationContextType, ConversationMemberStatus, MessageType, Prisma } from '@prisma/client';
+import {
+  ConversationContextType,
+  ConversationMemberStatus,
+  MessageType,
+  Prisma,
+} from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
-import { getSessionOptions } from '../../config/session.config';
 import type { CreateConversationDto } from './dto/create-conversation.dto';
 import type { SendMessageDto } from './dto/send-message.dto';
 import type { UpdateMemberStatusDto } from './dto/update-member-status.dto';
@@ -90,16 +94,23 @@ export class MessagingService {
     private readonly notificationsService: NotificationsService,
   ) {}
 
-  private getGateway(): { isUserOnline(userId: string): boolean; emitNewMessage(conversationId: string, message: MessageResponse): void } | null {
+  private getGateway(): {
+    isUserOnline(userId: string): boolean;
+    emitNewMessage(conversationId: string, message: MessageResponse): void;
+  } | null {
     try {
+      // Dynamic require avoids a circular dependency with MessagingGateway.
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
       const { MessagingGateway } = require('./messaging.gateway');
-      return this.moduleRef.get(MessagingGateway, { strict: false }) as any;
+      return this.moduleRef.get(MessagingGateway, { strict: false });
     } catch {
       return null;
     }
   }
 
-  private async isUserOnlineRespectingPrivacy(userId: string): Promise<boolean> {
+  private async isUserOnlineRespectingPrivacy(
+    userId: string,
+  ): Promise<boolean> {
     const settings = await this.prisma.privacySettings.findUnique({
       where: { userId },
     });
@@ -118,7 +129,8 @@ export class MessagingService {
     switch (contextType) {
       case 'LISTING':
         if (contextId === null) return null;
-        if (listingTitleMap.has(contextId)) return listingTitleMap.get(contextId)!;
+        if (listingTitleMap.has(contextId))
+          return listingTitleMap.get(contextId)!;
         return DELETED_LISTING_LABEL;
       case 'EVENT':
         return 'Events';
@@ -146,7 +158,10 @@ export class MessagingService {
   }
 
   /** True 1:1 direct threads only (both users present; no third member). */
-  private buildDirectPairWhere(userId: string, participantId: string): Prisma.ConversationWhereInput {
+  private buildDirectPairWhere(
+    userId: string,
+    participantId: string,
+  ): Prisma.ConversationWhereInput {
     return {
       type: 'DIRECT',
       members: {
@@ -164,7 +179,12 @@ export class MessagingService {
       members: {
         include: {
           user: {
-            select: { id: true, username: true, fullName: true, avatarUrl: true },
+            select: {
+              id: true,
+              username: true,
+              fullName: true,
+              avatarUrl: true,
+            },
           },
         },
       },
@@ -204,7 +224,7 @@ export class MessagingService {
     });
     const exactTwo = exactRows.filter((c) => c.members.length === 2);
     if (exactTwo.length > 0) {
-      return exactTwo[0]!;
+      return exactTwo[0];
     }
 
     if (contextType === 'LISTING' || contextType === 'EVENT') {
@@ -226,15 +246,21 @@ export class MessagingService {
     if (pairOnly.length === 0) {
       return null;
     }
-    const generalOpen = pairOnly.find((c) => c.contextType === 'GENERAL' && c.contextId == null);
-    return generalOpen ?? pairOnly[0]!;
+    const generalOpen = pairOnly.find(
+      (c) => c.contextType === 'GENERAL' && c.contextId == null,
+    );
+    return generalOpen ?? pairOnly[0];
   }
 
   private async returnExistingDirectConversation(
     userId: string,
     conv: {
       id: string;
-      members: Array<{ userId: string; status: string; lastReadAt: Date | null }>;
+      members: Array<{
+        userId: string;
+        status: string;
+        lastReadAt: Date | null;
+      }>;
     } & Record<string, unknown>,
   ): Promise<ConversationResponse> {
     const myMember = conv.members.find((m) => m.userId === userId);
@@ -245,14 +271,21 @@ export class MessagingService {
       where: {
         conversationId: conv.id,
         senderId: { not: userId },
-        ...(myMember?.lastReadAt ? { createdAt: { gt: myMember.lastReadAt } } : {}),
+        ...(myMember?.lastReadAt
+          ? { createdAt: { gt: myMember.lastReadAt } }
+          : {}),
       },
     });
     const listingTitleMap = await this.buildListingTitleMapForOne(
       conv.contextType as string,
       (conv.contextId as string | null) ?? null,
     );
-    return this.formatConversation(conv as any, userId, unreadCount, listingTitleMap);
+    return this.formatConversation(
+      conv as any,
+      userId,
+      unreadCount,
+      listingTitleMap,
+    );
   }
 
   async formatConversation(
@@ -269,7 +302,13 @@ export class MessagingService {
         userId: string;
         role: string;
         status: string;
-        user: { id: string; username: string; fullName: string; avatarUrl: string | null; avatarFile?: { id: string } | null };
+        user: {
+          id: string;
+          username: string;
+          fullName: string;
+          avatarUrl: string | null;
+          avatarFile?: { id: string } | null;
+        };
       }>;
       messages?: Array<{
         id: string;
@@ -317,7 +356,9 @@ export class MessagingService {
             username: otherMember.user.username,
             name: otherMember.user.fullName,
             avatarUrl: otherMember.user.avatarUrl ?? null,
-            isOnline: await this.isUserOnlineRespectingPrivacy(otherMember.user.id),
+            isOnline: await this.isUserOnlineRespectingPrivacy(
+              otherMember.user.id,
+            ),
           }
         : null;
 
@@ -333,7 +374,11 @@ export class MessagingService {
       otherUser,
       lastMessage,
       unreadCount,
-      contextLabel: this.contextLabel(raw.contextType, raw.contextId, listingTitleMap),
+      contextLabel: this.contextLabel(
+        raw.contextType,
+        raw.contextId,
+        listingTitleMap,
+      ),
     };
   }
 
@@ -344,7 +389,12 @@ export class MessagingService {
       type: string;
       isEdited: boolean;
       createdAt: Date;
-      sender: { id: string; username: string; fullName: string; avatarUrl: string | null };
+      sender: {
+        id: string;
+        username: string;
+        fullName: string;
+        avatarUrl: string | null;
+      };
       imageUrl?: string | null;
     },
     currentUserId: string,
@@ -366,7 +416,10 @@ export class MessagingService {
     };
   }
 
-  async getConversations(userId: string, query: ConversationsQueryDto): Promise<ConversationResponse[]> {
+  async getConversations(
+    userId: string,
+    query: ConversationsQueryDto,
+  ): Promise<ConversationResponse[]> {
     const type = query.type ?? 'all';
     const search = query.search?.trim();
 
@@ -388,7 +441,10 @@ export class MessagingService {
 
     const conversations = await this.prisma.conversation.findMany({
       where,
-      orderBy: [{ lastMessageAt: { sort: 'desc', nulls: 'last' } }, { createdAt: 'desc' }],
+      orderBy: [
+        { lastMessageAt: { sort: 'desc', nulls: 'last' } },
+        { createdAt: 'desc' },
+      ],
       include: {
         members: {
           include: {
@@ -456,7 +512,14 @@ export class MessagingService {
           senderId: { not: userId },
         },
       });
-      result.push(await this.formatConversation(conv as any, userId, unreadCount, listingTitleMap));
+      result.push(
+        await this.formatConversation(
+          conv as any,
+          userId,
+          unreadCount,
+          listingTitleMap,
+        ),
+      );
     }
     return result;
   }
@@ -506,11 +569,22 @@ export class MessagingService {
         senderId: { not: userId },
       },
     });
-    const listingTitleMap = await this.buildListingTitleMapForOne(conv.contextType, conv.contextId);
-    return this.formatConversation(conv as any, userId, unreadCount, listingTitleMap);
+    const listingTitleMap = await this.buildListingTitleMapForOne(
+      conv.contextType,
+      conv.contextId,
+    );
+    return this.formatConversation(
+      conv as any,
+      userId,
+      unreadCount,
+      listingTitleMap,
+    );
   }
 
-  async createConversation(userId: string, dto: CreateConversationDto): Promise<ConversationResponse> {
+  async createConversation(
+    userId: string,
+    dto: CreateConversationDto,
+  ): Promise<ConversationResponse> {
     const participant = await this.prisma.user.findFirst({
       where: { id: dto.participantId, isActive: true, deletedAt: null },
     });
@@ -520,21 +594,35 @@ export class MessagingService {
 
     const [blockedByMe, blockedByThem] = await Promise.all([
       this.prisma.blockedUser.findUnique({
-        where: { blockerId_blockedId: { blockerId: userId, blockedId: dto.participantId } },
+        where: {
+          blockerId_blockedId: {
+            blockerId: userId,
+            blockedId: dto.participantId,
+          },
+        },
       }),
       this.prisma.blockedUser.findUnique({
-        where: { blockerId_blockedId: { blockerId: dto.participantId, blockedId: userId } },
+        where: {
+          blockerId_blockedId: {
+            blockerId: dto.participantId,
+            blockedId: userId,
+          },
+        },
       }),
     ]);
     if (blockedByMe || blockedByThem) {
-      throw new BadRequestException('Cannot start a conversation with this user.');
+      throw new BadRequestException(
+        'Cannot start a conversation with this user.',
+      );
     }
 
     if (dto.participantId === userId) {
-      throw new BadRequestException('Cannot start a conversation with yourself.');
+      throw new BadRequestException(
+        'Cannot start a conversation with yourself.',
+      );
     }
 
-    const contextType = (dto.contextType ?? 'GENERAL') as ConversationContextType;
+    const contextType = dto.contextType ?? 'GENERAL';
     const contextId = dto.contextId ?? null;
 
     const existingDirect = await this.findExistingDirectConversation(
@@ -544,7 +632,10 @@ export class MessagingService {
       contextId,
     );
     if (existingDirect) {
-      return this.returnExistingDirectConversation(userId, existingDirect as any);
+      return this.returnExistingDirectConversation(
+        userId,
+        existingDirect as any,
+      );
     }
 
     try {
@@ -573,9 +664,17 @@ export class MessagingService {
         fullConv.contextType,
         fullConv.contextId,
       );
-      return this.formatConversation(fullConv as any, userId, 0, listingTitleMap);
+      return this.formatConversation(
+        fullConv as any,
+        userId,
+        0,
+        listingTitleMap,
+      );
     } catch (e) {
-      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+      if (
+        e instanceof Prisma.PrismaClientKnownRequestError &&
+        e.code === 'P2002'
+      ) {
         const again = await this.findExistingDirectConversation(
           userId,
           dto.participantId,
@@ -604,7 +703,9 @@ export class MessagingService {
     }
 
     const cursorDate = cursor ? new Date(cursor) : undefined;
-    const where: { conversationId: string; createdAt?: { lt: Date } } = { conversationId };
+    const where: { conversationId: string; createdAt?: { lt: Date } } = {
+      conversationId,
+    };
     if (cursorDate && !isNaN(cursorDate.getTime())) {
       where.createdAt = { lt: cursorDate };
     }
@@ -614,15 +715,18 @@ export class MessagingService {
       orderBy: { createdAt: 'desc' },
       take: limit + 1,
       include: {
-        sender: { select: { id: true, username: true, fullName: true, avatarUrl: true } },
+        sender: {
+          select: { id: true, username: true, fullName: true, avatarUrl: true },
+        },
       },
     });
 
     const hasMore = messages.length > limit;
     const page = hasMore ? messages.slice(0, limit) : messages;
-    const nextCursor = hasMore && page.length > 0
-      ? page[page.length - 1].createdAt.toISOString()
-      : null;
+    const nextCursor =
+      hasMore && page.length > 0
+        ? page[page.length - 1].createdAt.toISOString()
+        : null;
 
     const ordered = page.reverse();
     const data = ordered.map((m) => this.formatMessage(m as any, userId));
@@ -645,7 +749,9 @@ export class MessagingService {
       throw new ForbiddenException('FORBIDDEN');
     }
     if (member.status === 'PENDING') {
-      throw new ForbiddenException('Accept the conversation request before sending messages.');
+      throw new ForbiddenException(
+        'Accept the conversation request before sending messages.',
+      );
     }
     if (member.status === 'BLOCKED') {
       throw new ForbiddenException('FORBIDDEN');
@@ -672,7 +778,8 @@ export class MessagingService {
 
     let type: MessageType = (dto.type as MessageType) ?? 'TEXT';
     let imageUrl: string | null = null;
-    let content = dto.content != null ? sanitizeInput(String(dto.content)) : '';
+    const content =
+      dto.content != null ? sanitizeInput(String(dto.content)) : '';
 
     if (file) {
       if (file.size > IMAGE_MAX_SIZE_BYTES) {
@@ -702,7 +809,9 @@ export class MessagingService {
         imageUrl,
       },
       include: {
-        sender: { select: { id: true, username: true, fullName: true, avatarUrl: true } },
+        sender: {
+          select: { id: true, username: true, fullName: true, avatarUrl: true },
+        },
       },
     });
 
@@ -725,9 +834,10 @@ export class MessagingService {
       select: { userId: true },
     });
     const senderName = (message as any).sender?.fullName ?? 'Someone';
-    const contentPreview = content.length > 100 ? content.slice(0, 100) + '…' : content;
+    const contentPreview =
+      content.length > 100 ? content.slice(0, 100) + '…' : content;
     for (const m of otherAcceptedMembers) {
-      this.notificationsService.createNotification({
+      void this.notificationsService.createNotification({
         userId: m.userId,
         type: 'MESSAGE',
         title: `New message from ${senderName}`,
@@ -740,7 +850,10 @@ export class MessagingService {
     return formatted;
   }
 
-  async markAsRead(userId: string, conversationId: string): Promise<{ lastReadAt: string }> {
+  async markAsRead(
+    userId: string,
+    conversationId: string,
+  ): Promise<{ lastReadAt: string }> {
     const member = await this.prisma.conversationMember.findUnique({
       where: { conversationId_userId: { conversationId, userId } },
     });
@@ -831,21 +944,30 @@ export class MessagingService {
     return m?.status === status;
   }
 
-  async getMemberStatus(conversationId: string, userId: string): Promise<ConversationMemberStatus | null> {
+  async getMemberStatus(
+    conversationId: string,
+    userId: string,
+  ): Promise<ConversationMemberStatus | null> {
     const m = await this.prisma.conversationMember.findUnique({
       where: { conversationId_userId: { conversationId, userId } },
     });
     return m?.status ?? null;
   }
 
-  async findMemberByConversationAndUser(conversationId: string, userId: string) {
+  async findMemberByConversationAndUser(
+    conversationId: string,
+    userId: string,
+  ) {
     return this.prisma.conversationMember.findUnique({
       where: { conversationId_userId: { conversationId, userId } },
     });
   }
 
   // SPRINT-27: soft-hide conversation for the requesting user only
-  async hideConversation(userId: string, conversationId: string): Promise<{ message: string }> {
+  async hideConversation(
+    userId: string,
+    conversationId: string,
+  ): Promise<{ message: string }> {
     const member = await this.prisma.conversationMember.findUnique({
       where: { conversationId_userId: { conversationId, userId } },
     });
@@ -859,5 +981,3 @@ export class MessagingService {
     return { message: 'Conversation removed' };
   }
 }
-
-

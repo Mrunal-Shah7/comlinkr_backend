@@ -83,7 +83,12 @@ export class AuthService {
     ];
     const list = this.configService.get<string>('GOOGLE_CLIENT_IDS');
     if (list?.trim()) {
-      ids.push(...list.split(',').map((s) => s.trim()).filter(Boolean));
+      ids.push(
+        ...list
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean),
+      );
     }
     const seen = new Set<string>();
     const out: string[] = [];
@@ -107,7 +112,12 @@ export class AuthService {
     role: string;
     onboardingCompleted: boolean;
     createdAt: Date;
-    location?: { city: string; country: string; countryCode: string; state: string } | null;
+    location?: {
+      city: string;
+      country: string;
+      countryCode: string;
+      state: string;
+    } | null;
   }): AuthSessionPayload {
     return {
       user: this.formatUserResponse(user),
@@ -125,7 +135,12 @@ export class AuthService {
     role: string;
     onboardingCompleted: boolean;
     createdAt: Date;
-    location?: { city: string; country: string; countryCode: string; state: string } | null;
+    location?: {
+      city: string;
+      country: string;
+      countryCode: string;
+      state: string;
+    } | null;
   }): UserResponse {
     return {
       id: user.id,
@@ -167,13 +182,21 @@ export class AuthService {
 
   private regenerateSession(session: Session): Promise<void> {
     return new Promise((resolve, reject) => {
-      session.regenerate((err) => (err ? reject(err) : resolve()));
+      session.regenerate((err) =>
+        err
+          ? reject(err instanceof Error ? err : new Error(String(err)))
+          : resolve(),
+      );
     });
   }
 
   private saveSession(session: Session): Promise<void> {
     return new Promise((resolve, reject) => {
-      session.save((err) => (err ? reject(err) : resolve()));
+      session.save((err) =>
+        err
+          ? reject(err instanceof Error ? err : new Error(String(err)))
+          : resolve(),
+      );
     });
   }
 
@@ -303,10 +326,10 @@ export class AuthService {
       return u;
     });
 
-    await this.regenerateSession(req.session!);
+    await this.regenerateSession(req.session);
     (req.session as any).userId = user.id;
     (req.session as any).provider = 'LOCAL';
-    await this.saveSession(req.session!);
+    await this.saveSession(req.session);
 
     return this.toAuthSession(user);
   }
@@ -314,9 +337,7 @@ export class AuthService {
   async login(dto: LoginDto, req: Request): Promise<AuthSessionPayload> {
     const isEmail = dto.identifier.includes('@');
     const user = await this.prisma.user.findFirst({
-      where: isEmail
-        ? { email: dto.identifier }
-        : { username: dto.identifier },
+      where: isEmail ? { email: dto.identifier } : { username: dto.identifier },
       include: { authProviders: true, location: true },
     });
 
@@ -329,7 +350,9 @@ export class AuthService {
       });
     }
 
-    const localProvider = user.authProviders.find((p) => p.provider === 'LOCAL');
+    const localProvider = user.authProviders.find(
+      (p) => p.provider === 'LOCAL',
+    );
     if (!localProvider?.passwordHash) {
       throw new UnauthorizedException({
         code: 'AUTH_PROVIDER_CONFLICT',
@@ -338,7 +361,10 @@ export class AuthService {
       });
     }
 
-    const match = await bcrypt.compare(dto.password, localProvider.passwordHash);
+    const match = await bcrypt.compare(
+      dto.password,
+      localProvider.passwordHash,
+    );
     if (!match) {
       throw new UnauthorizedException({
         code: 'AUTH_INVALID_CREDENTIALS',
@@ -351,10 +377,10 @@ export class AuthService {
       data: { lastActiveAt: new Date() },
     });
 
-    await this.regenerateSession(req.session!);
+    await this.regenerateSession(req.session);
     (req.session as any).userId = user.id;
     (req.session as any).provider = 'LOCAL';
-    await this.saveSession(req.session!);
+    await this.saveSession(req.session);
 
     return this.toAuthSession(user);
   }
@@ -380,7 +406,7 @@ export class AuthService {
     try {
       const ticket = await this.googleClient.verifyIdToken({
         idToken: dto.idToken,
-        audience: audiences.length === 1 ? audiences[0]! : audiences,
+        audience: audiences.length === 1 ? audiences[0] : audiences,
       });
       payload = ticket.getPayload() as any;
     } catch {
@@ -428,10 +454,10 @@ export class AuthService {
         where: { id: user.id },
         data: { lastActiveAt: new Date() },
       });
-      await this.regenerateSession(req.session!);
+      await this.regenerateSession(req.session);
       (req.session as any).userId = user.id;
       (req.session as any).provider = 'GOOGLE';
-      await this.saveSession(req.session!);
+      await this.saveSession(req.session);
       return this.toAuthSession(user);
     }
 
@@ -447,10 +473,10 @@ export class AuthService {
           providerUserId: sub,
         },
       });
-      await this.regenerateSession(req.session!);
+      await this.regenerateSession(req.session);
       (req.session as any).userId = existingUser.id;
       (req.session as any).provider = 'GOOGLE';
-      await this.saveSession(req.session!);
+      await this.saveSession(req.session);
       return this.toAuthSession(existingUser);
     }
 
@@ -515,10 +541,10 @@ export class AuthService {
       return u;
     });
 
-    await this.regenerateSession(req.session!);
+    await this.regenerateSession(req.session);
     (req.session as any).userId = user.id;
     (req.session as any).provider = 'GOOGLE';
-    await this.saveSession(req.session!);
+    await this.saveSession(req.session);
     return this.toAuthSession(user);
   }
 
@@ -542,9 +568,7 @@ export class AuthService {
     const sub = payload.sub;
     const email = payload.email ?? `${sub}@privaterelay.appleid.com`;
     const name =
-      dto.fullName?.trim() ||
-      (payload as any).name ||
-      email.split('@')[0];
+      dto.fullName?.trim() || (payload as any).name || email.split('@')[0];
 
     const existingProvider = await this.prisma.authProvider.findFirst({
       where: {
@@ -567,10 +591,10 @@ export class AuthService {
         where: { id: user.id },
         data: { lastActiveAt: new Date() },
       });
-      await this.regenerateSession(req.session!);
+      await this.regenerateSession(req.session);
       (req.session as any).userId = user.id;
       (req.session as any).provider = 'APPLE';
-      await this.saveSession(req.session!);
+      await this.saveSession(req.session);
       return this.toAuthSession(user);
     }
 
@@ -586,10 +610,10 @@ export class AuthService {
           providerUserId: sub,
         },
       });
-      await this.regenerateSession(req.session!);
+      await this.regenerateSession(req.session);
       (req.session as any).userId = existingUser.id;
       (req.session as any).provider = 'APPLE';
-      await this.saveSession(req.session!);
+      await this.saveSession(req.session);
       return this.toAuthSession(existingUser);
     }
 
@@ -654,10 +678,10 @@ export class AuthService {
       return u;
     });
 
-    await this.regenerateSession(req.session!);
+    await this.regenerateSession(req.session);
     (req.session as any).userId = user.id;
     (req.session as any).provider = 'APPLE';
-    await this.saveSession(req.session!);
+    await this.saveSession(req.session);
     return this.toAuthSession(user);
   }
 
@@ -691,7 +715,9 @@ export class AuthService {
     }
 
     const hashedPassword = await bcrypt.hash(dto.newPassword, 12);
-    const localProvider = user.authProviders.find((p) => p.provider === 'LOCAL');
+    const localProvider = user.authProviders.find(
+      (p) => p.provider === 'LOCAL',
+    );
 
     if (localProvider) {
       await this.prisma.authProvider.update({
@@ -717,7 +743,7 @@ export class AuthService {
   async logout(session: Session): Promise<{ message: string }> {
     return new Promise((resolve, reject) => {
       session.destroy((err) => {
-        if (err) reject(err);
+        if (err) reject(err instanceof Error ? err : new Error(String(err)));
         else resolve({ message: 'Logged out successfully' });
       });
     });
@@ -762,4 +788,3 @@ export class AuthService {
     return { message: 'Provider unlinked successfully' };
   }
 }
-

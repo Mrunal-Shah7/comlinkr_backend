@@ -29,7 +29,7 @@ export class CreateQuestionDto {
 
   @ApiPropertyOptional({
     description:
-      'Tags as array or comma-separated string (e.g. \"housing, transit\")',
+      'Tags as array or comma-separated string (e.g. "housing, transit")',
     type: [String],
   })
   @IsOptional()
@@ -51,4 +51,3 @@ export class CreateQuestionDto {
   })
   tags?: string[];
 }
-

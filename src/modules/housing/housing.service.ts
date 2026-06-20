@@ -11,7 +11,10 @@ import { StorageService } from '../storage/storage.service';
 import { CreateListingDto } from './dto/create-listing.dto';
 import { UpdateListingDto } from './dto/update-listing.dto';
 import { HousingQueryDto } from './dto/housing-query.dto';
-import { PaginationDto, createPaginationMeta } from '../../common/dto/pagination.dto';
+import {
+  PaginationDto,
+  createPaginationMeta,
+} from '../../common/dto/pagination.dto';
 
 const LISTING_IMAGE_MAX = 6;
 const LISTING_IMAGE_MAX_SIZE = 5 * 1024 * 1024;
@@ -41,8 +44,7 @@ export class HousingService {
     currentUserId?: string,
     isSavedOverride?: boolean,
   ) {
-    const isInterested =
-      currentUserId && (listing.interests?.length ?? 0) > 0;
+    const isInterested = currentUserId && (listing.interests?.length ?? 0) > 0;
     const interestCount =
       listing._count?.interests ?? listing.interests?.length ?? 0;
     const isSaved =
@@ -166,7 +168,10 @@ export class HousingService {
     ]);
 
     const data = items.map((listing) => {
-      const listingWithCount = { ...listing, interestCount: listing._count.interests };
+      const listingWithCount = {
+        ...listing,
+        interestCount: listing._count.interests,
+      };
       return this.formatListing(listingWithCount, userId);
     });
     return { data, meta: createPaginationMeta(page, limit, total) };
@@ -267,7 +272,9 @@ export class HousingService {
       country: dto.country,
       latitude: dto.latitude,
       longitude: dto.longitude,
-      availableDate: dto.availableDate ? new Date(dto.availableDate) : undefined,
+      availableDate: dto.availableDate
+        ? new Date(dto.availableDate)
+        : undefined,
       leaseTerm: dto.leaseTerm,
       isFurnished: dto.isFurnished ?? false,
       petPolicy: dto.petPolicy,
@@ -303,7 +310,11 @@ export class HousingService {
     return this.formatListing(withCount, userId);
   }
 
-  async updateListing(userId: string, listingId: string, dto: UpdateListingDto) {
+  async updateListing(
+    userId: string,
+    listingId: string,
+    dto: UpdateListingDto,
+  ) {
     const listing = await this.prisma.housingListing.findUnique({
       where: { id: listingId },
     });
@@ -322,7 +333,8 @@ export class HousingService {
     const updateData: Prisma.HousingListingUpdateInput = {};
     if (dto.title !== undefined) updateData.title = dto.title;
     if (dto.description !== undefined) updateData.description = dto.description;
-    if (dto.propertyType !== undefined) updateData.propertyType = dto.propertyType;
+    if (dto.propertyType !== undefined)
+      updateData.propertyType = dto.propertyType;
     if (dto.price !== undefined) updateData.price = dto.price;
     if (dto.currency !== undefined) updateData.currency = dto.currency;
     if (dto.deposit !== undefined) updateData.deposit = dto.deposit;
@@ -331,14 +343,17 @@ export class HousingService {
     if (dto.sqft !== undefined) updateData.sqft = dto.sqft;
     if (dto.floor !== undefined) updateData.floor = dto.floor;
     if (dto.address !== undefined) updateData.address = dto.address;
-    if (dto.neighborhood !== undefined) updateData.neighborhood = dto.neighborhood;
+    if (dto.neighborhood !== undefined)
+      updateData.neighborhood = dto.neighborhood;
     if (dto.city !== undefined) updateData.city = dto.city;
     if (dto.state !== undefined) updateData.state = dto.state;
     if (dto.country !== undefined) updateData.country = dto.country;
     if (dto.latitude !== undefined) updateData.latitude = dto.latitude;
     if (dto.longitude !== undefined) updateData.longitude = dto.longitude;
     if (dto.availableDate !== undefined)
-      updateData.availableDate = dto.availableDate ? new Date(dto.availableDate) : null;
+      updateData.availableDate = dto.availableDate
+        ? new Date(dto.availableDate)
+        : null;
     if (dto.leaseTerm !== undefined) updateData.leaseTerm = dto.leaseTerm;
     if (dto.isFurnished !== undefined) updateData.isFurnished = dto.isFurnished;
     if (dto.petPolicy !== undefined) updateData.petPolicy = dto.petPolicy;
@@ -413,7 +428,9 @@ export class HousingService {
       });
     }
     const ownerBlockedUser = await this.prisma.blockedUser.findUnique({
-      where: { blockerId_blockedId: { blockerId: listing.ownerId, blockedId: userId } },
+      where: {
+        blockerId_blockedId: { blockerId: listing.ownerId, blockedId: userId },
+      },
     });
     if (ownerBlockedUser) {
       throw new NotFoundException({
@@ -495,7 +512,12 @@ export class HousingService {
         message: `Maximum 6 images per listing. You have ${existing} already.`,
       });
     }
-    const results: Array<{ id: string; url: string; order: number; caption: string | null }> = [];
+    const results: Array<{
+      id: string;
+      url: string;
+      order: number;
+      caption: string | null;
+    }> = [];
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       if (file.size > LISTING_IMAGE_MAX_SIZE) {
@@ -535,11 +557,7 @@ export class HousingService {
     return results;
   }
 
-  async removeListingImage(
-    userId: string,
-    listingId: string,
-    imageId: string,
-  ) {
+  async removeListingImage(userId: string, listingId: string, imageId: string) {
     const listing = await this.prisma.housingListing.findUnique({
       where: { id: listingId },
       include: { images: true },
@@ -673,5 +691,3 @@ export class HousingService {
     return { data, meta: createPaginationMeta(page, limit, total) };
   }
 }
-
-

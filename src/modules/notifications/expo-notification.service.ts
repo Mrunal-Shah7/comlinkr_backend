@@ -28,7 +28,11 @@ export class ExpoNotificationService {
     await this.prisma.pushToken.deleteMany({ where: { userId } });
   }
 
-  async sendToUsers(userIds: string[], title: string, body: string): Promise<number> {
+  async sendToUsers(
+    userIds: string[],
+    title: string,
+    body: string,
+  ): Promise<number> {
     if (userIds.length === 0) return 0;
     const tokens = await this.prisma.pushToken.findMany({
       where: { userId: { in: userIds } },
@@ -67,7 +71,11 @@ export class ExpoNotificationService {
           continue;
         }
         let result: {
-          data?: Array<{ status?: string; message?: string; details?: { error?: string } }>;
+          data?: Array<{
+            status?: string;
+            message?: string;
+            details?: { error?: string };
+          }>;
         };
         try {
           result = JSON.parse(rawText) as typeof result;
@@ -78,7 +86,10 @@ export class ExpoNotificationService {
         const erroredTokens: string[] = [];
         result.data?.forEach((item, index) => {
           if (item?.status === 'error') {
-            console.error('Expo push error:', item.message ?? 'Unknown Expo error');
+            console.error(
+              'Expo push error:',
+              item.message ?? 'Unknown Expo error',
+            );
             if (item.details?.error === 'DeviceNotRegistered') {
               erroredTokens.push(batch[index].token);
             }

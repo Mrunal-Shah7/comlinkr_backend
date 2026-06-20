@@ -1,6 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { PaginationDto, createPaginationMeta } from '../../common/dto/pagination.dto';
+import {
+  PaginationDto,
+  createPaginationMeta,
+} from '../../common/dto/pagination.dto';
 import { StorageService } from '../storage/storage.service';
 import { AddNewsCommentDto } from './dto/add-news-comment.dto';
 import { SaveNewsArticleDto } from './dto/save-news-article.dto'; // SPRINT-30
@@ -32,7 +35,12 @@ export class NewsService {
   private readonly logger = new Logger(NewsService.name);
   private readonly cache = new Map<
     string,
-    { ts: number; phase: 'primary' | 'full'; cachedAt: string; data: RssNewsArticle[] }
+    {
+      ts: number;
+      phase: 'primary' | 'full';
+      cachedAt: string;
+      data: RssNewsArticle[];
+    }
   >();
   private readonly ttlMs = 5 * 60 * 1000;
   private readonly primaryTtlMs = 3 * 60 * 1000;
@@ -57,14 +65,22 @@ export class NewsService {
     const cacheKey = `${c.toLowerCase()}|${co.toLowerCase()}|${(state ?? '').toLowerCase()}`; // SPRINT-30
     const hit = this.cache.get(cacheKey);
     if (!force && hit && Date.now() - hit.ts < this.ttlMs) {
-      return this.toPagedPayload(hit.data, hit.cachedAt, 'full', page, pageSize);
+      return this.toPagedPayload(
+        hit.data,
+        hit.cachedAt,
+        'full',
+        page,
+        pageSize,
+      );
     }
 
     const geo = this.resolveGeoCountry(co);
     const timeBucket = getTimeBucket();
     // When force refresh is requested, rotate queries much faster so repeated pulls
     // within the same 15-minute bucket still vary the Google RSS URL.
-    const rotationIndex = force ? Math.floor(Date.now() / 1000 / 10) : getRotationIndex(60);
+    const rotationIndex = force
+      ? Math.floor(Date.now() / 1000 / 10)
+      : getRotationIndex(60);
     const localQuery = buildLocalNewsQuery(c, rotationIndex, timeBucket);
     const nationalQuery = buildNationalNewsQuery(co, rotationIndex, timeBucket);
 
@@ -110,12 +126,22 @@ export class NewsService {
     });
 
     const cachedAt = new Date().toISOString();
-    this.cache.set(cacheKey, { ts: Date.now(), phase: 'full', cachedAt, data: unique });
+    this.cache.set(cacheKey, {
+      ts: Date.now(),
+      phase: 'full',
+      cachedAt,
+      data: unique,
+    });
 
     void enrichArticlesWithImages(unique)
       .then((enriched) => {
         const current = this.cache.get(cacheKey);
-        if (!current || current.cachedAt !== cachedAt || current.phase !== 'full') return;
+        if (
+          !current ||
+          current.cachedAt !== cachedAt ||
+          current.phase !== 'full'
+        )
+          return;
         this.cache.set(cacheKey, {
           ts: Date.now(),
           phase: 'full',
@@ -145,13 +171,21 @@ export class NewsService {
     this.trackActiveLocation(c, co);
     const geo = this.resolveGeoCountry(co);
     const timeBucket = getTimeBucket();
-    const rotationIndex = force ? Math.floor(Date.now() / 1000 / 10) : getRotationIndex(60);
+    const rotationIndex = force
+      ? Math.floor(Date.now() / 1000 / 10)
+      : getRotationIndex(60);
     const localQuery = buildLocalNewsQuery(c, rotationIndex, timeBucket);
     const nationalQuery = buildNationalNewsQuery(co, rotationIndex, timeBucket);
     const cacheKey = `primary:${c.toLowerCase()}|${co.toLowerCase()}|${(state ?? '').toLowerCase()}`; // SPRINT-30
     const hit = this.cache.get(cacheKey);
     if (!force && hit && Date.now() - hit.ts < this.primaryTtlMs) {
-      return this.toPagedPayload(hit.data, hit.cachedAt, 'primary', page, pageSize);
+      return this.toPagedPayload(
+        hit.data,
+        hit.cachedAt,
+        'primary',
+        page,
+        pageSize,
+      );
     }
 
     const [cityNews, countryNews] = await Promise.all([
@@ -186,7 +220,12 @@ export class NewsService {
     });
 
     const cachedAt = new Date().toISOString();
-    this.cache.set(cacheKey, { ts: Date.now(), phase: 'primary', cachedAt, data: unique });
+    this.cache.set(cacheKey, {
+      ts: Date.now(),
+      phase: 'primary',
+      cachedAt,
+      data: unique,
+    });
     return this.toPagedPayload(unique, cachedAt, 'primary', page, pageSize);
   }
 
@@ -201,7 +240,8 @@ export class NewsService {
       this.prisma.newsArticleLike.findUnique({
         where: { userId_articleId: { userId, articleId } },
       }),
-      this.prisma.newsArticleSave.findUnique({ // SPRINT-30
+      this.prisma.newsArticleSave.findUnique({
+        // SPRINT-30
         where: { userId_articleId: { userId, articleId } },
       }),
     ]);
@@ -215,7 +255,11 @@ export class NewsService {
   }
 
   // SPRINT-30: toggle saved live news article
-  async toggleArticleSave(userId: string, articleId: string, dto: SaveNewsArticleDto) {
+  async toggleArticleSave(
+    userId: string,
+    articleId: string,
+    dto: SaveNewsArticleDto,
+  ) {
     const existing = await this.prisma.newsArticleSave.findUnique({
       where: { userId_articleId: { userId, articleId } },
     });
@@ -291,7 +335,11 @@ export class NewsService {
     };
   }
 
-  async addArticleComment(userId: string, articleId: string, dto: AddNewsCommentDto) {
+  async addArticleComment(
+    userId: string,
+    articleId: string,
+    dto: AddNewsCommentDto,
+  ) {
     const comment = await this.prisma.newsArticleComment.create({
       data: {
         userId,
@@ -313,7 +361,11 @@ export class NewsService {
     return this.formatComment(comment);
   }
 
-  async getArticleComments(userId: string, articleId: string, query: PaginationDto) {
+  async getArticleComments(
+    userId: string,
+    articleId: string,
+    query: PaginationDto,
+  ) {
     void userId;
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
@@ -361,7 +413,13 @@ export class NewsService {
     const st = (state ?? '').trim();
     if (cityArticles.length >= 5 || !st) return cityArticles;
 
-    const stateArticles = await fetchStateNews(st, timeBucket, rotationIndex, gl, hl);
+    const stateArticles = await fetchStateNews(
+      st,
+      timeBucket,
+      rotationIndex,
+      gl,
+      hl,
+    );
     const additions: RssNewsArticle[] = [];
     for (const a of stateArticles) {
       if (additions.length >= 15) break;
@@ -402,7 +460,10 @@ export class NewsService {
     pageSize: number,
   ): NewsExplorePayload {
     const safePage = Number.isFinite(page) && page > 0 ? Math.floor(page) : 1;
-    const safePageSize = Number.isFinite(pageSize) && pageSize > 0 ? Math.min(100, Math.floor(pageSize)) : 20;
+    const safePageSize =
+      Number.isFinite(pageSize) && pageSize > 0
+        ? Math.min(100, Math.floor(pageSize))
+        : 20;
     const start = (safePage - 1) * safePageSize;
     const paged = data.slice(start, start + safePageSize);
     return {
@@ -421,7 +482,12 @@ export class NewsService {
     articleId: string;
     content: string;
     createdAt: Date;
-    user: { id: string; username: string; fullName: string; avatarUrl: string | null };
+    user: {
+      id: string;
+      username: string;
+      fullName: string;
+      avatarUrl: string | null;
+    };
   }) {
     return {
       id: comment.id,
@@ -432,7 +498,9 @@ export class NewsService {
         id: comment.user.id,
         username: comment.user.username,
         name: comment.user.fullName,
-        avatarUrl: comment.user.avatarUrl ? this.storageService.resolvePublicUrl(comment.user.avatarUrl) : null,
+        avatarUrl: comment.user.avatarUrl
+          ? this.storageService.resolvePublicUrl(comment.user.avatarUrl)
+          : null,
       },
     };
   }

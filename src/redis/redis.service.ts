@@ -7,7 +7,10 @@ export class RedisService implements OnModuleInit {
   private readonly client: RedisClientType;
 
   constructor(private readonly configService: ConfigService) {
-    const url = this.configService.get<string>('REDIS_URL', 'redis://localhost:6379');
+    const url = this.configService.get<string>(
+      'REDIS_URL',
+      'redis://localhost:6379',
+    );
     this.client = createClient({ url }) as RedisClientType;
     this.client.on('error', (err) => console.error('Redis client error:', err));
   }

@@ -63,4 +63,3 @@ export class UpdateFeedPostDto {
   @MaxLength(100)
   sourceLabel?: string;
 }
-

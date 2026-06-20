@@ -54,7 +54,10 @@ export class StoriesController {
   /** Must be before @Get(':id') so "me" is not parsed as an id. */
   @Get('me')
   @ApiOperation({ summary: 'Current user’s active stories' })
-  @ApiResponse({ status: 200, description: 'Array of active stories for the viewer' })
+  @ApiResponse({
+    status: 200,
+    description: 'Array of active stories for the viewer',
+  })
   async getMyStories(@CurrentUser('id') userId: string) {
     return this.storiesService.getMyStories(userId);
   }
@@ -73,7 +76,7 @@ export class StoriesController {
   }
 
   @Get()
-  @ApiOperation({ summary: 'Active stories in user\'s city' })
+  @ApiOperation({ summary: "Active stories in user's city" })
   @ApiResponse({ status: 200, description: 'Array of active stories' })
   async getActiveStories(@CurrentUser('id') userId: string) {
     return this.storiesService.getActiveStories(userId);
@@ -116,10 +119,7 @@ export class StoriesController {
   @Post(':id/like')
   @ApiOperation({ summary: 'Toggle like on a story' })
   @ApiResponse({ status: 200, description: 'Like toggled' })
-  async toggleLike(
-    @CurrentUser('id') userId: string,
-    @Param('id') id: string,
-  ) {
+  async toggleLike(@CurrentUser('id') userId: string, @Param('id') id: string) {
     return this.storiesService.toggleStoryLike(userId, id);
   }
 
@@ -137,10 +137,7 @@ export class StoriesController {
   @ApiOperation({ summary: 'View a story (increments view count)' })
   @ApiResponse({ status: 200, description: 'Story detail' })
   @ApiResponse({ status: 404, description: 'Not found or expired' })
-  async viewStory(
-    @CurrentUser('id') userId: string,
-    @Param('id') id: string,
-  ) {
+  async viewStory(@CurrentUser('id') userId: string, @Param('id') id: string) {
     return this.storiesService.viewStory(userId, id);
   }
 
@@ -156,7 +153,9 @@ export class StoriesController {
 
   @Delete(':id')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Delete own story (before or after expiry if still stored)' })
+  @ApiOperation({
+    summary: 'Delete own story (before or after expiry if still stored)',
+  })
   @ApiResponse({ status: 200, description: 'Story removed' })
   @ApiResponse({ status: 403, description: 'Not the author' })
   async deleteStory(

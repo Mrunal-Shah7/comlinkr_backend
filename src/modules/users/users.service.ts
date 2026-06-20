@@ -154,10 +154,35 @@ export class UsersService {
       role: string;
       onboardingCompleted: boolean;
       createdAt: Date;
-      location: { country: string; countryCode: string; dialCode: string; state: string; city: string } | null;
-      vibes: Array<{ id: string; slug: string; name: string; description: string; emoji: string }>;
-      interests: Array<{ id: string; slug: string; name: string; description: string; icon: string }>;
-      communities: Array<{ id: string; slug: string; name: string; category: string; countryCode: string | null; emoji: string }>;
+      location: {
+        country: string;
+        countryCode: string;
+        dialCode: string;
+        state: string;
+        city: string;
+      } | null;
+      vibes: Array<{
+        id: string;
+        slug: string;
+        name: string;
+        description: string;
+        emoji: string;
+      }>;
+      interests: Array<{
+        id: string;
+        slug: string;
+        name: string;
+        description: string;
+        icon: string;
+      }>;
+      communities: Array<{
+        id: string;
+        slug: string;
+        name: string;
+        category: string;
+        countryCode: string | null;
+        emoji: string;
+      }>;
       roommatePreferences: {
         budgetMin: number | null;
         budgetMax: number | null;
@@ -378,7 +403,10 @@ export class UsersService {
     return this.getMyProfile(userId);
   }
 
-  async uploadAvatar(userId: string, file: Express.Multer.File): Promise<{ avatarUrl: string }> {
+  async uploadAvatar(
+    userId: string,
+    file: Express.Multer.File,
+  ): Promise<{ avatarUrl: string }> {
     if (file.size > AVATAR_MAX_SIZE) {
       throw new BadRequestException({
         code: 'FILE_TOO_LARGE',
@@ -481,11 +509,7 @@ export class UsersService {
     }
 
     const stats = await this.computeStats(targetUserId);
-    return this.formatPublicProfile(
-      user,
-      user.privacySettings ?? null,
-      stats,
-    );
+    return this.formatPublicProfile(user, user.privacySettings ?? null, stats);
   }
 
   async getUserByUsername(requestingUserId: string, username: string) {
@@ -525,7 +549,10 @@ export class UsersService {
     await this.expoNotificationService.removeToken(token);
   }
 
-  async createSupportTicket(userId: string, dto: CreateSupportTicketDto): Promise<SupportTicket> {
+  async createSupportTicket(
+    userId: string,
+    dto: CreateSupportTicketDto,
+  ): Promise<SupportTicket> {
     return this.prisma.supportTicket.create({
       data: {
         userId,
@@ -543,5 +570,3 @@ export class UsersService {
     });
   }
 }
-
-

@@ -7,7 +7,9 @@ export class AppleAuthDto {
   @IsNotEmpty()
   idToken: string;
 
-  @ApiPropertyOptional({ description: 'Full name (only on first authorization)' })
+  @ApiPropertyOptional({
+    description: 'Full name (only on first authorization)',
+  })
   @IsOptional()
   @IsString()
   @MaxLength(100)

@@ -1,5 +1,11 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBooleanString, IsDateString, IsEnum, IsOptional, IsString } from 'class-validator';
+import {
+  IsBooleanString,
+  IsDateString,
+  IsEnum,
+  IsOptional,
+  IsString,
+} from 'class-validator';
 import { PaginationDto } from '../../../common/dto/pagination.dto';
 import { EventCategory, EventFormat } from '@prisma/client';
 

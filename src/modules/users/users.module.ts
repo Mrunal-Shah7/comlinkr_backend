@@ -8,10 +8,15 @@ import { UsersService } from './users.service';
 import { UsersController } from './users.controller';
 
 @Module({
-  imports: [PrismaModule, PostsModule, NotificationsModule, SettingsModule, FoodModule], // SPRINT-29: FoodModule
+  imports: [
+    PrismaModule,
+    PostsModule,
+    NotificationsModule,
+    SettingsModule,
+    FoodModule,
+  ], // SPRINT-29: FoodModule
   providers: [UsersService],
   controllers: [UsersController],
   exports: [UsersService],
 })
 export class UsersModule {}
-

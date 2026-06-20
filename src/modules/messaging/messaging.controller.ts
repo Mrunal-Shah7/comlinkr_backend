@@ -77,20 +77,40 @@ export class MessagingController {
   }
 
   @Get(':id/messages')
-  @ApiQuery({ name: 'cursor', required: false, type: String, description: 'ISO date cursor for pagination' })
-  @ApiQuery({ name: 'limit', required: false, type: Number, description: 'Page size (default 30)' })
+  @ApiQuery({
+    name: 'cursor',
+    required: false,
+    type: String,
+    description: 'ISO date cursor for pagination',
+  })
+  @ApiQuery({
+    name: 'limit',
+    required: false,
+    type: Number,
+    description: 'Page size (default 30)',
+  })
   async getMessages(
     @CurrentUser('id') userId: string,
     @Param('id') conversationId: string,
     @Query('cursor') cursor?: string,
     @Query('limit') limit?: string,
   ) {
-    const limitNum = limit != null ? Math.min(Math.max(1, parseInt(String(limit), 10)), 100) : MESSAGE_LIMIT;
-    return this.messagingService.getMessages(userId, conversationId, cursor, limitNum);
+    const limitNum =
+      limit != null
+        ? Math.min(Math.max(1, parseInt(String(limit), 10)), 100)
+        : MESSAGE_LIMIT;
+    return this.messagingService.getMessages(
+      userId,
+      conversationId,
+      cursor,
+      limitNum,
+    );
   }
 
   @Post(':id/messages')
-  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 5 * 1024 * 1024 } }))
+  @UseInterceptors(
+    FileInterceptor('file', { limits: { fileSize: 5 * 1024 * 1024 } }),
+  )
   @ApiConsumes('application/json', 'multipart/form-data')
   @ApiBody({
     schema: {

@@ -320,7 +320,12 @@ export class StoriesService {
     storyId: string;
     content: string;
     createdAt: Date;
-    author: { id: string; username: string; fullName: string; avatarUrl: string | null };
+    author: {
+      id: string;
+      username: string;
+      fullName: string;
+      avatarUrl: string | null;
+    };
   }) {
     return {
       id: comment.id,
@@ -336,7 +341,11 @@ export class StoriesService {
     };
   }
 
-  async addStoryComment(userId: string, storyId: string, dto: AddStoryCommentDto) {
+  async addStoryComment(
+    userId: string,
+    storyId: string,
+    dto: AddStoryCommentDto,
+  ) {
     const story = await this.prisma.story.findUnique({
       where: { id: storyId },
       select: { id: true, expiresAt: true },
@@ -376,7 +385,10 @@ export class StoriesService {
     });
 
     if (!created?.author) {
-      throw new NotFoundException({ code: 'RESOURCE_NOT_FOUND', message: 'Comment not found' });
+      throw new NotFoundException({
+        code: 'RESOURCE_NOT_FOUND',
+        message: 'Comment not found',
+      });
     }
     return this.formatStoryComment(created);
   }
@@ -391,7 +403,10 @@ export class StoriesService {
       select: { id: true },
     });
     if (!story) {
-      throw new NotFoundException({ code: 'RESOURCE_NOT_FOUND', message: 'Story not found' });
+      throw new NotFoundException({
+        code: 'RESOURCE_NOT_FOUND',
+        message: 'Story not found',
+      });
     }
 
     const [rows, total] = await this.prisma.$transaction([
@@ -426,7 +441,10 @@ export class StoriesService {
       },
     });
     if (!comment || comment.storyId !== storyId) {
-      throw new NotFoundException({ code: 'RESOURCE_NOT_FOUND', message: 'Comment not found' });
+      throw new NotFoundException({
+        code: 'RESOURCE_NOT_FOUND',
+        message: 'Comment not found',
+      });
     }
     const isAuthor = comment.authorId === userId;
     const isStoryOwner = comment.story.authorId === userId;
@@ -496,7 +514,10 @@ export class StoriesService {
       select: { id: true, likeCount: true },
     });
     if (!story) {
-      throw new NotFoundException({ code: 'RESOURCE_NOT_FOUND', message: 'Story not found' });
+      throw new NotFoundException({
+        code: 'RESOURCE_NOT_FOUND',
+        message: 'Story not found',
+      });
     }
     const [, likedByMe] = await Promise.all([
       Promise.resolve(story.likeCount),

@@ -1,10 +1,5 @@
 import { Body, Controller, Get, Post } from '@nestjs/common';
-import {
-  ApiTags,
-  ApiOperation,
-  ApiResponse,
-  ApiBody,
-} from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse, ApiBody } from '@nestjs/swagger';
 import { SkipOnboarding } from '../../common/decorators/skip-onboarding.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { OnboardingService } from './onboarding.service';
@@ -59,10 +54,7 @@ export class OnboardingController {
   @ApiBody({ type: SetVibesDto })
   @ApiResponse({ status: 200, description: 'Vibes saved' })
   @ApiResponse({ status: 400, description: 'Invalid vibe IDs' })
-  async setVibes(
-    @CurrentUser('id') userId: string,
-    @Body() dto: SetVibesDto,
-  ) {
+  async setVibes(@CurrentUser('id') userId: string, @Body() dto: SetVibesDto) {
     return this.onboardingService.setVibes(userId, dto);
   }
 

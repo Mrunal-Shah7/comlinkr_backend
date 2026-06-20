@@ -9,11 +9,14 @@ export function getSessionSecret(): string {
 }
 
 // connect-redis only has a named export RedisStore (no default function at runtime)
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const { RedisStore } = require('connect-redis') as {
   RedisStore: new (opts: { client: RedisClientType }) => session.Store;
 };
 
-export function getSessionOptions(redisClient: RedisClientType): session.SessionOptions {
+export function getSessionOptions(
+  redisClient: RedisClientType,
+): session.SessionOptions {
   const store = new RedisStore({ client: redisClient });
 
   const isProduction = process.env.NODE_ENV === 'production';

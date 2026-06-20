@@ -31,7 +31,10 @@ export class SettingsController {
   }
 
   @Patch('account')
-  updateAccount(@CurrentUser('id') userId: string, @Body() dto: UpdateAccountDto) {
+  updateAccount(
+    @CurrentUser('id') userId: string,
+    @Body() dto: UpdateAccountDto,
+  ) {
     return this.settingsService.updateAccount(userId, dto);
   }
 
@@ -41,7 +44,10 @@ export class SettingsController {
   }
 
   @Patch('privacy')
-  updatePrivacy(@CurrentUser('id') userId: string, @Body() dto: UpdatePrivacyDto) {
+  updatePrivacy(
+    @CurrentUser('id') userId: string,
+    @Body() dto: UpdatePrivacyDto,
+  ) {
     return this.settingsService.updatePrivacy(userId, dto);
   }
 
@@ -57,7 +63,10 @@ export class SettingsController {
   }
 
   @Delete('blocked-users/:userId')
-  unblockUser(@CurrentUser('id') userId: string, @Param('userId') targetUserId: string) {
+  unblockUser(
+    @CurrentUser('id') userId: string,
+    @Param('userId') targetUserId: string,
+  ) {
     return this.settingsService.unblockUser(userId, targetUserId);
   }
 
@@ -67,16 +76,22 @@ export class SettingsController {
   }
 
   @Patch('culture')
-  updateCulture(@CurrentUser('id') userId: string, @Body() dto: UpdateCultureDto) {
+  updateCulture(
+    @CurrentUser('id') userId: string,
+    @Body() dto: UpdateCultureDto,
+  ) {
     return this.settingsService.updateCulture(userId, dto);
   }
 
   @Post('delete-account')
-  async requestDeletion(@CurrentUser('id') userId: string, @Req() req: Request) {
+  async requestDeletion(
+    @CurrentUser('id') userId: string,
+    @Req() req: Request,
+  ) {
     const result = await this.settingsService.requestAccountDeletion(userId);
     return new Promise<typeof result>((resolve, reject) => {
       req.session.destroy((err) => {
-        if (err) reject(err);
+        if (err) reject(err instanceof Error ? err : new Error(String(err)));
         else resolve(result);
       });
     });

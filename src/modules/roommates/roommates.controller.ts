@@ -8,12 +8,7 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import {
-  ApiOperation,
-  ApiQuery,
-  ApiResponse,
-  ApiTags,
-} from '@nestjs/swagger';
+import { ApiOperation, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { RoommatesService } from './roommates.service';
@@ -28,7 +23,9 @@ export class RoommatesController {
   constructor(private readonly roommatesService: RoommatesService) {}
 
   @Get('matches')
-  @ApiOperation({ summary: 'AI-style best-match list (same as search with sort=best_match)' })
+  @ApiOperation({
+    summary: 'AI-style best-match list (same as search with sort=best_match)',
+  })
   @ApiQuery({ name: 'page', required: false })
   @ApiQuery({ name: 'limit', required: false })
   @ApiQuery({ name: 'city', required: false })
@@ -140,7 +137,10 @@ export class RoommatesController {
 
   @Post(':id/connect')
   @ApiOperation({ summary: 'Send connection request / start conversation' })
-  @ApiResponse({ status: 201, description: 'Connection request sent or existing conversation' })
+  @ApiResponse({
+    status: 201,
+    description: 'Connection request sent or existing conversation',
+  })
   @ApiResponse({ status: 404, description: 'User not found' })
   async sendConnectionRequest(
     @CurrentUser('id') userId: string,
@@ -150,7 +150,9 @@ export class RoommatesController {
   }
 
   @Post(':id/accept')
-  @ApiOperation({ summary: 'Accept incoming roommate connection request from user :id' })
+  @ApiOperation({
+    summary: 'Accept incoming roommate connection request from user :id',
+  })
   @ApiResponse({ status: 200, description: 'Connection accepted' })
   @ApiResponse({ status: 400, description: 'No pending request' })
   async acceptConnection(
@@ -161,7 +163,9 @@ export class RoommatesController {
   }
 
   @Post(':id/decline')
-  @ApiOperation({ summary: 'Decline incoming roommate connection request from user :id' })
+  @ApiOperation({
+    summary: 'Decline incoming roommate connection request from user :id',
+  })
   @ApiResponse({ status: 200, description: 'Request declined' })
   async declineConnection(
     @CurrentUser('id') userId: string,

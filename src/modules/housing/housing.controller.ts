@@ -38,7 +38,11 @@ export class HousingController {
   @ApiOperation({ summary: 'List housing listings with filters' })
   @ApiQuery({ name: 'page', required: false })
   @ApiQuery({ name: 'limit', required: false })
-  @ApiQuery({ name: 'type', required: false, enum: ['APARTMENT', 'HOUSE', 'CONDO', 'ROOM', 'STUDIO', 'OTHER'] })
+  @ApiQuery({
+    name: 'type',
+    required: false,
+    enum: ['APARTMENT', 'HOUSE', 'CONDO', 'ROOM', 'STUDIO', 'OTHER'],
+  })
   @ApiQuery({ name: 'minPrice', required: false })
   @ApiQuery({ name: 'maxPrice', required: false })
   @ApiQuery({ name: 'beds', required: false })
@@ -109,7 +113,10 @@ export class HousingController {
   }
 
   @Post()
-  @ApiOperation({ summary: 'Create listing (verified landlord/agency badge adds trust on the listing)' })
+  @ApiOperation({
+    summary:
+      'Create listing (verified landlord/agency badge adds trust on the listing)',
+  })
   @ApiResponse({ status: 201, description: 'Listing created' })
   async createListing(
     @CurrentUser('id') userId: string,
@@ -146,7 +153,10 @@ export class HousingController {
   @Post(':id/interest')
   @ApiOperation({ summary: 'Mark interest on listing' })
   @ApiResponse({ status: 200, description: 'Interest marked' })
-  @ApiResponse({ status: 400, description: 'Cannot mark interest on own listing' })
+  @ApiResponse({
+    status: 400,
+    description: 'Cannot mark interest on own listing',
+  })
   @ApiResponse({ status: 404, description: 'Listing not found' })
   async markInterest(
     @CurrentUser('id') userId: string,
@@ -168,10 +178,7 @@ export class HousingController {
   @Post(':id/save')
   @ApiOperation({ summary: 'Toggle save/bookmark on a listing' })
   @ApiResponse({ status: 200, description: 'Save state' })
-  async toggleSave(
-    @CurrentUser('id') userId: string,
-    @Param('id') id: string,
-  ) {
+  async toggleSave(@CurrentUser('id') userId: string, @Param('id') id: string) {
     return this.housingService.toggleSave(userId, id);
   }
 

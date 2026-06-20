@@ -28,9 +28,7 @@ export class ChallengesService {
 
   private computeEndDate(startsAt: Date, duration: ChallengeDuration): Date {
     const days = DURATION_DAYS[duration] ?? 7;
-    return new Date(
-      startsAt.getTime() + days * 24 * 60 * 60 * 1000,
-    );
+    return new Date(startsAt.getTime() + days * 24 * 60 * 60 * 1000);
   }
 
   private formatTimeLeft(endsAt: Date, status: string): string {
@@ -63,12 +61,8 @@ export class ChallengesService {
       maxParticipants != null
         ? Math.max(0, maxParticipants - participantCount)
         : null;
-    const isJoined =
-      currentUserId && (challenge.participants?.length ?? 0) > 0;
-    const timeLeft = this.formatTimeLeft(
-      challenge.endsAt,
-      challenge.status,
-    );
+    const isJoined = currentUserId && (challenge.participants?.length ?? 0) > 0;
+    const timeLeft = this.formatTimeLeft(challenge.endsAt, challenge.status);
     return {
       id: challenge.id,
       title: challenge.title,
@@ -302,4 +296,3 @@ export class ChallengesService {
     return { joined: true, participantCount: newCount };
   }
 }
-

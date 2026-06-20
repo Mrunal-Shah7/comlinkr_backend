@@ -9,4 +9,3 @@ import { HousingService } from './housing.service';
   providers: [HousingService],
 })
 export class HousingModule {}
-

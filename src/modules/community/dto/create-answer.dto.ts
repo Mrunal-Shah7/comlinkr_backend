@@ -8,4 +8,3 @@ export class CreateAnswerDto {
   @MaxLength(2000)
   content: string;
 }
-

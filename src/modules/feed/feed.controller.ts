@@ -48,7 +48,9 @@ export class FeedController {
   }
 
   @Get('mood')
-  @ApiOperation({ summary: 'Get neighborhood mood distribution for current city' })
+  @ApiOperation({
+    summary: 'Get neighborhood mood distribution for current city',
+  })
   @ApiResponse({ status: 200, description: 'Mood counts and percentages' })
   async getNeighborhoodMood(
     @CurrentUser('id') userId: string,
@@ -60,7 +62,10 @@ export class FeedController {
   @Post('mood')
   @ApiOperation({ summary: 'Vote your neighborhood mood for current city' })
   @ApiBody({ type: VoteNeighborhoodMoodDto })
-  @ApiResponse({ status: 200, description: 'Updated mood counts and percentages' })
+  @ApiResponse({
+    status: 200,
+    description: 'Updated mood counts and percentages',
+  })
   async voteNeighborhoodMood(
     @CurrentUser('id') userId: string,
     @Body() dto: VoteNeighborhoodMoodDto,
@@ -104,7 +109,18 @@ export class FeedController {
       properties: {
         title: { type: 'string', maxLength: 120 },
         content: { type: 'string', maxLength: 2000 },
-        category: { type: 'string', enum: ['COMMUNITY','ANNOUNCEMENT','JOBS','ALERT','DISCUSSION','QUESTION','TIP'] },
+        category: {
+          type: 'string',
+          enum: [
+            'COMMUNITY',
+            'ANNOUNCEMENT',
+            'JOBS',
+            'ALERT',
+            'DISCUSSION',
+            'QUESTION',
+            'TIP',
+          ],
+        },
         tags: {
           oneOf: [
             { type: 'string', description: 'Comma-separated tags' },
@@ -154,10 +170,7 @@ export class FeedController {
   @Post(':id/like')
   @ApiOperation({ summary: 'Toggle like on a post' })
   @ApiResponse({ status: 200, description: 'Like state and count' })
-  async toggleLike(
-    @CurrentUser('id') userId: string,
-    @Param('id') id: string,
-  ) {
+  async toggleLike(@CurrentUser('id') userId: string, @Param('id') id: string) {
     return this.feedService.toggleLike(userId, id);
   }
 
@@ -175,21 +188,14 @@ export class FeedController {
   @Get(':id/comments')
   @ApiOperation({ summary: 'Get paginated comments for a post' })
   @ApiResponse({ status: 200, description: 'Paginated comments' })
-  async getComments(
-    @Param('id') id: string,
-    @Query() query: PaginationDto,
-  ) {
+  async getComments(@Param('id') id: string, @Query() query: PaginationDto) {
     return this.feedService.getComments(id, query);
   }
 
   @Post(':id/save')
   @ApiOperation({ summary: 'Toggle save/bookmark on a post' })
   @ApiResponse({ status: 200, description: 'Save state and count' })
-  async toggleSave(
-    @CurrentUser('id') userId: string,
-    @Param('id') id: string,
-  ) {
+  async toggleSave(@CurrentUser('id') userId: string, @Param('id') id: string) {
     return this.feedService.toggleSave(userId, id);
   }
 }
-

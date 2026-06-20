@@ -28,7 +28,9 @@ export class StoriesCronService {
       }
     }
     if (expired.length > 0) {
-      console.log(`[StoriesCron] Cleaned up ${expired.length} expired story(ies)`);
+      console.log(
+        `[StoriesCron] Cleaned up ${expired.length} expired story(ies)`,
+      );
     }
   }
 }

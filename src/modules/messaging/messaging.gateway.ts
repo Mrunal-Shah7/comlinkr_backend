@@ -7,7 +7,6 @@ import {
   WebSocketGateway,
   WebSocketServer,
 } from '@nestjs/websockets';
-import { ConfigService } from '@nestjs/config';
 import { Namespace, Server } from 'socket.io';
 import session from 'express-session';
 import { RedisService } from '../../redis/redis.service';
@@ -37,7 +36,11 @@ export class MessagingGateway
   private readonly logger = new Logger(MessagingGateway.name);
   private readonly userSockets = new Map<string, Set<string>>();
   private readonly socketUsers = new Map<string, string>();
-  private sessionMiddleware!: (req: any, res: any, next: (err?: any) => void) => void;
+  private sessionMiddleware!: (
+    req: any,
+    res: any,
+    next: (err?: any) => void,
+  ) => void;
 
   constructor(
     private readonly messagingService: MessagingService,
@@ -69,10 +72,11 @@ export class MessagingGateway
     const wasEmpty = set.size === 0;
     set.add(socket.id);
     this.socketUsers.set(socket.id, userId);
-    (socket as any).userId = userId;
+    socket.userId = userId;
 
     if (wasEmpty) {
-      const partnerIds = await this.messagingService.getConversationPartnerIds(userId);
+      const partnerIds =
+        await this.messagingService.getConversationPartnerIds(userId);
       for (const pid of partnerIds) {
         const sockets = this.getUserSockets(pid);
         for (const sid of sockets) {
@@ -84,21 +88,23 @@ export class MessagingGateway
   }
 
   handleDisconnect(socket: any) {
-    const userId = (socket as any).userId ?? this.socketUsers.get(socket.id);
+    const userId = socket.userId ?? this.socketUsers.get(socket.id);
     if (!userId) return;
     const set = this.userSockets.get(userId);
     if (set) {
       set.delete(socket.id);
       if (set.size === 0) {
         this.userSockets.delete(userId);
-        this.messagingService.getConversationPartnerIds(userId).then((partnerIds) => {
-          for (const pid of partnerIds) {
-            const sockets = this.getUserSockets(pid);
-            for (const sid of sockets) {
-              this.server.to(sid).emit('user_offline', { userId });
+        void this.messagingService
+          .getConversationPartnerIds(userId)
+          .then((partnerIds) => {
+            for (const pid of partnerIds) {
+              const sockets = this.getUserSockets(pid);
+              for (const sid of sockets) {
+                this.server.to(sid).emit('user_offline', { userId });
+              }
             }
-          }
-        });
+          });
       }
     }
     this.socketUsers.delete(socket.id);
@@ -120,17 +126,26 @@ export class MessagingGateway
   }
 
   emitNewMessage(conversationId: string, message: MessageResponse): void {
-    this.server.to(conversationId).emit('new_message', { conversationId, message });
+    this.server
+      .to(conversationId)
+      .emit('new_message', { conversationId, message });
   }
 
-  async joinConversation(socketId: string, conversationId: string, userId: string): Promise<{ ok: boolean; error?: string }> {
-    const member = await this.messagingService.findMemberByConversationAndUser(conversationId, userId);
+  async joinConversation(
+    socketId: string,
+    conversationId: string,
+    userId: string,
+  ): Promise<{ ok: boolean; error?: string }> {
+    const member = await this.messagingService.findMemberByConversationAndUser(
+      conversationId,
+      userId,
+    );
     if (!member || member.status === 'BLOCKED') {
       return { ok: false, error: 'Not a member of this conversation' };
     }
     const socket = this.getSocketById(socketId);
     if (socket) {
-      socket.join(conversationId);
+      void socket.join(conversationId);
     }
     return { ok: true };
   }
@@ -138,17 +153,23 @@ export class MessagingGateway
   leaveConversation(socketId: string, conversationId: string): void {
     const socket = this.getSocketById(socketId);
     if (socket) {
-      socket.leave(conversationId);
+      void socket.leave(conversationId);
     }
   }
 
   @SubscribeMessage('join_conversation')
   async onJoinConversation(socket: any, payload: { conversationId: string }) {
-    const userId = (socket as any).userId;
+    const userId = socket.userId;
     if (!userId) return;
-    const result = await this.joinConversation(socket.id, payload.conversationId, userId);
+    const result = await this.joinConversation(
+      socket.id,
+      payload.conversationId,
+      userId,
+    );
     if (!result.ok) {
-      socket.emit('error', { message: result.error ?? 'Not a member of this conversation' });
+      socket.emit('error', {
+        message: result.error ?? 'Not a member of this conversation',
+      });
     }
   }
 
@@ -158,11 +179,18 @@ export class MessagingGateway
   }
 
   @SubscribeMessage('send_message')
-  async onSendMessage(socket: any, payload: { conversationId: string; content: string; type?: string }) {
-    const userId = (socket as any).userId;
+  async onSendMessage(
+    socket: any,
+    payload: { conversationId: string; content: string; type?: string },
+  ) {
+    const userId = socket.userId;
     if (!userId) return;
     const { conversationId, content, type } = payload;
-    if (!content || typeof content !== 'string' || content.trim().length === 0) {
+    if (
+      !content ||
+      typeof content !== 'string' ||
+      content.trim().length === 0
+    ) {
       socket.emit('error', { message: 'Content is required' });
       return;
     }
@@ -170,9 +198,17 @@ export class MessagingGateway
       socket.emit('error', { message: 'Content too long' });
       return;
     }
-    const status = await this.messagingService.getMemberStatus(conversationId, userId);
+    const status = await this.messagingService.getMemberStatus(
+      conversationId,
+      userId,
+    );
     if (status !== 'ACCEPTED') {
-      socket.emit('error', { message: status === 'PENDING' ? 'Accept the conversation request before sending messages.' : 'Forbidden' });
+      socket.emit('error', {
+        message:
+          status === 'PENDING'
+            ? 'Accept the conversation request before sending messages.'
+            : 'Forbidden',
+      });
       return;
     }
     try {
@@ -182,13 +218,15 @@ export class MessagingGateway
       });
       // Service already emits new_message via emitNewMessage
     } catch (err: any) {
-      socket.emit('error', { message: err?.message ?? 'Failed to send message' });
+      socket.emit('error', {
+        message: err?.message ?? 'Failed to send message',
+      });
     }
   }
 
   @SubscribeMessage('typing_start')
   async onTypingStart(socket: any, payload: { conversationId: string }) {
-    const userId = (socket as any).userId;
+    const userId = socket.userId;
     if (!userId) return;
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
@@ -203,7 +241,7 @@ export class MessagingGateway
 
   @SubscribeMessage('typing_stop')
   onTypingStop(socket: any, payload: { conversationId: string }) {
-    const userId = (socket as any).userId;
+    const userId = socket.userId;
     if (!userId) return;
     socket.to(payload.conversationId).emit('typing_stop', {
       conversationId: payload.conversationId,
@@ -212,8 +250,11 @@ export class MessagingGateway
   }
 
   @SubscribeMessage('message_read')
-  async onMessageRead(socket: any, payload: { conversationId: string; messageId: string }) {
-    const userId = (socket as any).userId;
+  async onMessageRead(
+    socket: any,
+    payload: { conversationId: string; messageId: string },
+  ) {
+    const userId = socket.userId;
     if (!userId) return;
     const { conversationId, messageId } = payload;
     try {

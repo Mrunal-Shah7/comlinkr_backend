@@ -45,7 +45,11 @@ export class OtpService {
     await this.mailService.sendOtpEmail(email, code, type);
   }
 
-  async verifyOtp(email: string, code: string, type: OtpType): Promise<boolean> {
+  async verifyOtp(
+    email: string,
+    code: string,
+    type: OtpType,
+  ): Promise<boolean> {
     const now = new Date();
 
     const record = await this.prisma.otpCode.findFirst({

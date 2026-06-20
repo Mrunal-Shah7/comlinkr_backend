@@ -41,7 +41,11 @@ const BADGE_CONTENT_DESC: Record<BadgeType, string> = {
   LOCAL_REVIEWER: 'community reviews',
 };
 
-const PLATFORM_DEFAULTS = { maintenanceMode: false, registrationEnabled: true, maxFileUploadMB: 10 };
+const PLATFORM_DEFAULTS = {
+  maintenanceMode: false,
+  registrationEnabled: true,
+  maxFileUploadMB: 10,
+};
 
 @Injectable()
 export class AdminService {
@@ -113,7 +117,13 @@ export class AdminService {
       },
     });
     if (!user) throw new NotFoundException('User not found');
-    const [feedCount, housingCount, restaurantCount, conversationCount, eventCount] = await Promise.all([
+    const [
+      feedCount,
+      housingCount,
+      restaurantCount,
+      conversationCount,
+      eventCount,
+    ] = await Promise.all([
       this.prisma.feedPost.count({ where: { authorId: userId } }),
       this.prisma.housingListing.count({ where: { ownerId: userId } }),
       this.prisma.restaurant.count({ where: { ownerId: userId } }),
@@ -122,7 +132,13 @@ export class AdminService {
     ]);
     return {
       ...user,
-      counts: { feedPosts: feedCount, housingListings: housingCount, restaurants: restaurantCount, conversations: conversationCount, events: eventCount },
+      counts: {
+        feedPosts: feedCount,
+        housingListings: housingCount,
+        restaurants: restaurantCount,
+        conversations: conversationCount,
+        events: eventCount,
+      },
     };
   }
 
@@ -159,14 +175,22 @@ export class AdminService {
       referenceId: adminUserId,
     });
     try {
-      await this.expoNotificationService.sendToUsers([userId], 'Account warning', message);
+      await this.expoNotificationService.sendToUsers(
+        [userId],
+        'Account warning',
+        message,
+      );
     } catch {
       // Push delivery is best-effort; in-app notification is already stored.
     }
     return { message: 'Warning sent' };
   }
 
-  async grantUserBadge(adminUserId: string, userId: string, badgeType: BadgeType) {
+  async grantUserBadge(
+    adminUserId: string,
+    userId: string,
+    badgeType: BadgeType,
+  ) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException('User not found');
     const existing = await this.prisma.userBadge.findUnique({
@@ -216,65 +240,141 @@ export class AdminService {
       ? [query.contentType]
       : (['feed_posts', 'housing', 'restaurants'] as const);
 
-    const results: Array<{ id: string; contentType: string; title?: string; author?: any; createdAt: Date; [k: string]: any }> = [];
+    const results: Array<{
+      id: string;
+      contentType: string;
+      title?: string;
+      author?: any;
+      createdAt: Date;
+      [k: string]: any;
+    }> = [];
     if (types.includes('feed_posts')) {
       const where: Prisma.FeedPostWhereInput = {};
-      if (search) where.OR = [{ title: { contains: search, mode: 'insensitive' } }, { content: { contains: search, mode: 'insensitive' } }];
+      if (search)
+        where.OR = [
+          { title: { contains: search, mode: 'insensitive' } },
+          { content: { contains: search, mode: 'insensitive' } },
+        ];
       const posts = await this.prisma.feedPost.findMany({
         where,
         orderBy: { createdAt: 'desc' },
         take: types.length === 1 ? limit : 50,
         skip: types.length === 1 ? skip : 0,
-        include: { author: { select: { id: true, username: true, fullName: true } } },
+        include: {
+          author: { select: { id: true, username: true, fullName: true } },
+        },
       });
-      results.push(...posts.map((p) => ({ ...p, contentType: 'feed_post' as const, title: p.title })));
+      results.push(
+        ...posts.map((p) => ({
+          ...p,
+          contentType: 'feed_post' as const,
+          title: p.title,
+        })),
+      );
     }
     if (types.includes('housing')) {
       const where: Prisma.HousingListingWhereInput = {};
-      if (search) where.OR = [{ title: { contains: search, mode: 'insensitive' } }, { description: { contains: search, mode: 'insensitive' } }];
+      if (search)
+        where.OR = [
+          { title: { contains: search, mode: 'insensitive' } },
+          { description: { contains: search, mode: 'insensitive' } },
+        ];
       const listings = await this.prisma.housingListing.findMany({
         where,
         orderBy: { createdAt: 'desc' },
         take: types.length === 1 ? limit : 50,
         skip: types.length === 1 ? skip : 0,
-        include: { owner: { select: { id: true, username: true, fullName: true } } },
+        include: {
+          owner: { select: { id: true, username: true, fullName: true } },
+        },
       });
-      results.push(...listings.map((l) => ({ ...l, contentType: 'housing_listing' as const, title: l.title, author: l.owner })));
+      results.push(
+        ...listings.map((l) => ({
+          ...l,
+          contentType: 'housing_listing' as const,
+          title: l.title,
+          author: l.owner,
+        })),
+      );
     }
     if (types.includes('restaurants')) {
       const where: Prisma.RestaurantWhereInput = {};
-      if (search) where.OR = [{ name: { contains: search, mode: 'insensitive' } }, { description: { contains: search, mode: 'insensitive' } }];
+      if (search)
+        where.OR = [
+          { name: { contains: search, mode: 'insensitive' } },
+          { description: { contains: search, mode: 'insensitive' } },
+        ];
       const restaurants = await this.prisma.restaurant.findMany({
         where,
         orderBy: { createdAt: 'desc' },
         take: types.length === 1 ? limit : 50,
         skip: types.length === 1 ? skip : 0,
-        include: { owner: { select: { id: true, username: true, fullName: true } } },
+        include: {
+          owner: { select: { id: true, username: true, fullName: true } },
+        },
       });
-      results.push(...restaurants.map((r) => ({ ...r, contentType: 'restaurant' as const, title: r.name, author: r.owner })));
+      results.push(
+        ...restaurants.map((r) => ({
+          ...r,
+          contentType: 'restaurant' as const,
+          title: r.name,
+          author: r.owner,
+        })),
+      );
     }
     results.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
     const total = results.length;
-    const data = types.length === 1 ? results : results.slice(skip, skip + limit);
+    const data =
+      types.length === 1 ? results : results.slice(skip, skip + limit);
     return { data, meta: createPaginationMeta(page, limit, total) };
   }
 
   async moderateContent(contentId: string, dto: ModerateContentDto) {
     if (dto.contentType === 'feed_post') {
-      const post = await this.prisma.feedPost.findUnique({ where: { id: contentId } });
+      const post = await this.prisma.feedPost.findUnique({
+        where: { id: contentId },
+      });
       if (!post) throw new NotFoundException('Content not found');
-      if (dto.action === 'approve') await this.prisma.feedPost.update({ where: { id: contentId }, data: { isPublished: true } });
-      else await this.prisma.feedPost.update({ where: { id: contentId }, data: { isPublished: false } });
+      if (dto.action === 'approve')
+        await this.prisma.feedPost.update({
+          where: { id: contentId },
+          data: { isPublished: true },
+        });
+      else
+        await this.prisma.feedPost.update({
+          where: { id: contentId },
+          data: { isPublished: false },
+        });
     } else if (dto.contentType === 'housing_listing') {
-      const listing = await this.prisma.housingListing.findUnique({ where: { id: contentId } });
+      const listing = await this.prisma.housingListing.findUnique({
+        where: { id: contentId },
+      });
       if (!listing) throw new NotFoundException('Content not found');
-      if (dto.action === 'approve') await this.prisma.housingListing.update({ where: { id: contentId }, data: { status: 'AVAILABLE' } });
-      else await this.prisma.housingListing.update({ where: { id: contentId }, data: { status: 'UNLISTED' } });
+      if (dto.action === 'approve')
+        await this.prisma.housingListing.update({
+          where: { id: contentId },
+          data: { status: 'AVAILABLE' },
+        });
+      else
+        await this.prisma.housingListing.update({
+          where: { id: contentId },
+          data: { status: 'UNLISTED' },
+        });
     } else if (dto.contentType === 'restaurant') {
-      const restaurant = await this.prisma.restaurant.findUnique({ where: { id: contentId } });
+      const restaurant = await this.prisma.restaurant.findUnique({
+        where: { id: contentId },
+      });
       if (!restaurant) throw new NotFoundException('Content not found');
-      if (dto.action === 'approve') await this.prisma.restaurant.update({ where: { id: contentId }, data: { isVerified: true } });
-      else await this.prisma.restaurant.update({ where: { id: contentId }, data: { isVerified: false } });
+      if (dto.action === 'approve')
+        await this.prisma.restaurant.update({
+          where: { id: contentId },
+          data: { isVerified: true },
+        });
+      else
+        await this.prisma.restaurant.update({
+          where: { id: contentId },
+          data: { isVerified: false },
+        });
     }
     return { message: `Content ${dto.action}d successfully` };
   }
@@ -290,7 +390,9 @@ export class AdminService {
         skip,
         take: limit,
         include: {
-          applicant: { select: { id: true, username: true, fullName: true, email: true } },
+          applicant: {
+            select: { id: true, username: true, fullName: true, email: true },
+          },
           documents: true,
         },
       }),
@@ -298,18 +400,28 @@ export class AdminService {
     ]);
     const data = items.map((a) => ({
       ...a,
-      documents: a.documents.map((d) => ({ id: d.id, documentType: d.documentType, createdAt: d.createdAt })),
+      documents: a.documents.map((d) => ({
+        id: d.id,
+        documentType: d.documentType,
+        createdAt: d.createdAt,
+      })),
     }));
     return { data, meta: createPaginationMeta(page, limit, total) };
   }
 
-  async reviewBadgeApplication(adminUserId: string, applicationId: string, dto: ReviewBadgeApplicationDto) {
+  async reviewBadgeApplication(
+    adminUserId: string,
+    applicationId: string,
+    dto: ReviewBadgeApplicationDto,
+  ) {
     const application = await this.prisma.badgeApplication.findUnique({
       where: { id: applicationId },
     });
     if (!application) throw new NotFoundException('Application not found');
     if (application.status !== 'PENDING') {
-      throw new BadRequestException('This application has already been reviewed.');
+      throw new BadRequestException(
+        'This application has already been reviewed.',
+      );
     }
     await this.prisma.badgeApplication.update({
       where: { id: applicationId },
@@ -322,17 +434,29 @@ export class AdminService {
     });
     if (dto.status === 'APPROVED') {
       await this.prisma.userBadge.upsert({
-        where: { userId_badgeType: { userId: application.userId, badgeType: application.badgeType } },
-        create: { userId: application.userId, badgeType: application.badgeType, applicationId: application.id },
+        where: {
+          userId_badgeType: {
+            userId: application.userId,
+            badgeType: application.badgeType,
+          },
+        },
+        create: {
+          userId: application.userId,
+          badgeType: application.badgeType,
+          applicationId: application.id,
+        },
         update: {},
       });
     }
     const badgeTypeName = BADGE_TYPE_NAMES[application.badgeType];
     const contentDesc = BADGE_CONTENT_DESC[application.badgeType];
-    this.notificationsService.createNotification({
+    void this.notificationsService.createNotification({
       userId: application.userId,
       type: 'BADGE_UPDATE',
-      title: dto.status === 'APPROVED' ? 'Badge application approved!' : 'Badge application update',
+      title:
+        dto.status === 'APPROVED'
+          ? 'Badge application approved!'
+          : 'Badge application update',
       body:
         dto.status === 'APPROVED'
           ? `Your ${badgeTypeName} badge has been approved! You can now create ${contentDesc}.`
@@ -340,7 +464,12 @@ export class AdminService {
       referenceType: 'BADGE_APPLICATION',
       referenceId: application.id,
     });
-    return { message: dto.status === 'APPROVED' ? 'Application approved.' : 'Application rejected.' };
+    return {
+      message:
+        dto.status === 'APPROVED'
+          ? 'Application approved.'
+          : 'Application rejected.',
+    };
   }
 
   async getAnalytics() {
@@ -387,7 +516,12 @@ export class AdminService {
       this.prisma.listingReport.count({ where: { status: 'PENDING' } }),
     ]);
     return {
-      users: { total: totalUsers, active: activeUsers, newThisMonth, newThisWeek },
+      users: {
+        total: totalUsers,
+        active: activeUsers,
+        newThisMonth,
+        newThisWeek,
+      },
       content: {
         feedPosts,
         housingListings,
@@ -399,7 +533,10 @@ export class AdminService {
       },
       engagement: { totalLikes, totalComments, totalMessages, totalReviews },
       reports: { pending: pendingReports },
-      badges: { pendingApplications: pendingBadges, totalApproved: totalApprovedBadges },
+      badges: {
+        pendingApplications: pendingBadges,
+        totalApproved: totalApprovedBadges,
+      },
     };
   }
 
@@ -432,7 +569,12 @@ export class AdminService {
         where,
         include: {
           author: {
-            select: { id: true, username: true, fullName: true, avatarUrl: true },
+            select: {
+              id: true,
+              username: true,
+              fullName: true,
+              avatarUrl: true,
+            },
           },
           media: { select: { imageUrl: true, order: true } },
         },
@@ -455,8 +597,13 @@ export class AdminService {
     });
   }
 
-  async moderateFeedPost(postId: string, action: 'approve' | 'reject' | 'delete') {
-    const post = await this.prisma.feedPost.findUnique({ where: { id: postId } });
+  async moderateFeedPost(
+    postId: string,
+    action: 'approve' | 'reject' | 'delete',
+  ) {
+    const post = await this.prisma.feedPost.findUnique({
+      where: { id: postId },
+    });
     if (!post) throw new NotFoundException('Post not found');
     if (action === 'delete') {
       await this.prisma.feedPost.delete({ where: { id: postId } });
@@ -534,7 +681,9 @@ export class AdminService {
         skip,
         take: pageSize,
         include: {
-          options: { select: { id: true, text: true, votesCount: true, order: true } },
+          options: {
+            select: { id: true, text: true, votesCount: true, order: true },
+          },
           createdBy: { select: { id: true, username: true } },
         },
       }),
@@ -543,7 +692,10 @@ export class AdminService {
     return {
       data: data.map((poll) => ({
         ...poll,
-        totalVotes: poll.options.reduce((sum, option) => sum + option.votesCount, 0),
+        totalVotes: poll.options.reduce(
+          (sum, option) => sum + option.votesCount,
+          0,
+        ),
       })),
       meta: createPaginationMeta(page, pageSize, total),
     };
@@ -552,7 +704,11 @@ export class AdminService {
   async createAdminPoll(adminUserId: string, dto: CreateAdminPollDto) {
     return this.prisma.$transaction(async (tx) => {
       const poll = await tx.adminPoll.create({
-        data: { question: dto.question, createdById: adminUserId, isActive: true },
+        data: {
+          question: dto.question,
+          createdById: adminUserId,
+          isActive: true,
+        },
       });
       await tx.adminPollOption.createMany({
         data: dto.options.map((text, index) => ({
@@ -564,13 +720,18 @@ export class AdminService {
       });
       return tx.adminPoll.findUnique({
         where: { id: poll.id },
-        include: { options: true, createdBy: { select: { id: true, username: true } } },
+        include: {
+          options: true,
+          createdBy: { select: { id: true, username: true } },
+        },
       });
     });
   }
 
   async toggleAdminPoll(pollId: string) {
-    const poll = await this.prisma.adminPoll.findUnique({ where: { id: pollId } });
+    const poll = await this.prisma.adminPoll.findUnique({
+      where: { id: pollId },
+    });
     if (!poll) throw new NotFoundException('Poll not found');
     return this.prisma.adminPoll.update({
       where: { id: pollId },
@@ -580,18 +741,26 @@ export class AdminService {
   }
 
   async deleteAdminPoll(pollId: string) {
-    const poll = await this.prisma.adminPoll.findUnique({ where: { id: pollId } });
+    const poll = await this.prisma.adminPoll.findUnique({
+      where: { id: pollId },
+    });
     if (!poll) throw new NotFoundException('Poll not found');
     await this.prisma.adminPoll.delete({ where: { id: pollId } });
     return { message: 'Poll deleted' };
   }
 
-  async getCommunityQuestions(query: { page?: number; pageSize?: number; search?: string; category?: string }) {
+  async getCommunityQuestions(query: {
+    page?: number;
+    pageSize?: number;
+    search?: string;
+    category?: string;
+  }) {
     const page = query.page ?? 1;
     const pageSize = query.pageSize ?? 20;
     const skip = (page - 1) * pageSize;
     const where: Prisma.CommunityQuestionWhereInput = {};
-    if (query.search) where.title = { contains: query.search, mode: 'insensitive' };
+    if (query.search)
+      where.title = { contains: query.search, mode: 'insensitive' };
     if (query.category) where.category = query.category as any;
     const [data, total] = await Promise.all([
       this.prisma.communityQuestion.findMany({
@@ -620,13 +789,19 @@ export class AdminService {
   }
 
   async moderateCommunityQuestion(questionId: string) {
-    const question = await this.prisma.communityQuestion.findUnique({ where: { id: questionId } });
+    const question = await this.prisma.communityQuestion.findUnique({
+      where: { id: questionId },
+    });
     if (!question) throw new NotFoundException('Question not found');
     await this.prisma.communityQuestion.delete({ where: { id: questionId } });
     return { message: 'Question deleted' };
   }
 
-  async getRoommateProfiles(query: { page?: number; pageSize?: number; search?: string }) {
+  async getRoommateProfiles(query: {
+    page?: number;
+    pageSize?: number;
+    search?: string;
+  }) {
     const page = query.page ?? 1;
     const pageSize = query.pageSize ?? 20;
     const skip = (page - 1) * pageSize;
@@ -665,7 +840,10 @@ export class AdminService {
     if (!user) throw new NotFoundException('User not found');
     if (action === 'suspend') {
       await this.prisma.$transaction([
-        this.prisma.user.update({ where: { id: userId }, data: { isActive: false } }),
+        this.prisma.user.update({
+          where: { id: userId },
+          data: { isActive: false },
+        }),
         this.prisma.roommatePreferences.updateMany({
           where: { userId },
           data: { isLooking: false },
@@ -677,7 +855,12 @@ export class AdminService {
     return { message: 'Roommate profile deleted' };
   }
 
-  async getAdminRestaurants(query: { page?: number; pageSize?: number; search?: string; isVerified?: boolean }) {
+  async getAdminRestaurants(query: {
+    page?: number;
+    pageSize?: number;
+    search?: string;
+    isVerified?: boolean;
+  }) {
     const page = query.page ?? 1;
     const pageSize = query.pageSize ?? 20;
     const skip = (page - 1) * pageSize;
@@ -705,15 +888,26 @@ export class AdminService {
     return { data, meta: createPaginationMeta(page, pageSize, total) };
   }
 
-  async moderateRestaurant(restaurantId: string, action: 'approve' | 'reject' | 'delete' | 'hide') {
-    const restaurant = await this.prisma.restaurant.findUnique({ where: { id: restaurantId } });
+  async moderateRestaurant(
+    restaurantId: string,
+    action: 'approve' | 'reject' | 'delete' | 'hide',
+  ) {
+    const restaurant = await this.prisma.restaurant.findUnique({
+      where: { id: restaurantId },
+    });
     if (!restaurant) throw new NotFoundException('Restaurant not found');
     if (action === 'delete') {
       await this.prisma.restaurant.delete({ where: { id: restaurantId } });
     } else if (action === 'approve') {
-      await this.prisma.restaurant.update({ where: { id: restaurantId }, data: { isVerified: true } });
+      await this.prisma.restaurant.update({
+        where: { id: restaurantId },
+        data: { isVerified: true },
+      });
     } else {
-      await this.prisma.restaurant.update({ where: { id: restaurantId }, data: { isVerified: false } });
+      await this.prisma.restaurant.update({
+        where: { id: restaurantId },
+        data: { isVerified: false },
+      });
     }
     return { message: `Restaurant ${action}d successfully` };
   }
@@ -753,8 +947,13 @@ export class AdminService {
     return { data, meta: createPaginationMeta(page, pageSize, total) };
   }
 
-  async moderateListing(listingId: string, action: 'approve' | 'reject' | 'delete' | 'hide') {
-    const listing = await this.prisma.housingListing.findUnique({ where: { id: listingId } });
+  async moderateListing(
+    listingId: string,
+    action: 'approve' | 'reject' | 'delete' | 'hide',
+  ) {
+    const listing = await this.prisma.housingListing.findUnique({
+      where: { id: listingId },
+    });
     if (!listing) throw new NotFoundException('Listing not found');
     if (action === 'delete') {
       await this.prisma.housingListing.delete({ where: { id: listingId } });
@@ -792,16 +991,22 @@ export class AdminService {
     const pageSize = query.pageSize ?? 20;
     const listingReportsPromise = this.prisma.listingReport.findMany({
       where: { status: 'PENDING' },
-      include: { reporter: { select: { id: true, username: true, fullName: true } } },
+      include: {
+        reporter: { select: { id: true, username: true, fullName: true } },
+      },
       orderBy: { createdAt: 'desc' },
     });
     const contentReportDelegate = (this.prisma as any).contentReport;
     if (!contentReportDelegate) {
-      console.warn('ContentReport model not available in deployed schema; returning listing reports only.');
+      console.warn(
+        'ContentReport model not available in deployed schema; returning listing reports only.',
+      );
     }
     const contentReportsPromise = contentReportDelegate
       ? contentReportDelegate.findMany({
-          include: { reporter: { select: { id: true, username: true, fullName: true } } },
+          include: {
+            reporter: { select: { id: true, username: true, fullName: true } },
+          },
           orderBy: { createdAt: 'desc' },
         })
       : Promise.resolve([]);
@@ -834,7 +1039,8 @@ export class AdminService {
       source: 'CONTENT_REPORT' as const,
     }));
     const merged = [...listingMapped, ...contentMapped].sort(
-      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+      (a, b) =>
+        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
     );
     const start = (page - 1) * pageSize;
     return {
@@ -846,16 +1052,22 @@ export class AdminService {
   async sendBroadcast(adminUserId: string, dto: SendBroadcastDto) {
     let recipientCount = 0;
     if (dto.audienceType === BroadcastAudienceType.ALL) {
-      recipientCount = await this.expoNotificationService.sendToAll(dto.title, dto.body);
+      recipientCount = await this.expoNotificationService.sendToAll(
+        dto.title,
+        dto.body,
+      );
     } else if (dto.audienceType === BroadcastAudienceType.CITY) {
-      if (!dto.audienceCity) throw new BadRequestException('audienceCity is required for CITY');
+      if (!dto.audienceCity)
+        throw new BadRequestException('audienceCity is required for CITY');
       recipientCount = await this.expoNotificationService.sendToCity(
         dto.audienceCity,
         dto.title,
         dto.body,
       );
       const cityUsers = await this.prisma.user.findMany({
-        where: { location: { city: { equals: dto.audienceCity, mode: 'insensitive' } } },
+        where: {
+          location: { city: { equals: dto.audienceCity, mode: 'insensitive' } },
+        },
         select: { id: true },
       });
       await this.prisma.notification.createMany({
@@ -868,7 +1080,9 @@ export class AdminService {
       });
     } else {
       if (!dto.audienceUserIds || dto.audienceUserIds.length === 0) {
-        throw new BadRequestException('audienceUserIds is required for SELECTIVE');
+        throw new BadRequestException(
+          'audienceUserIds is required for SELECTIVE',
+        );
       }
       recipientCount = await this.expoNotificationService.sendToUsers(
         dto.audienceUserIds,
@@ -903,7 +1117,9 @@ export class AdminService {
     const skip = (page - 1) * pageSize;
     const [data, total] = await Promise.all([
       this.prisma.broadcastNotification.findMany({
-        include: { sentBy: { select: { id: true, username: true, fullName: true } } },
+        include: {
+          sentBy: { select: { id: true, username: true, fullName: true } },
+        },
         orderBy: { createdAt: 'desc' },
         skip,
         take: pageSize,
@@ -913,7 +1129,11 @@ export class AdminService {
     return { data, meta: createPaginationMeta(page, pageSize, total) };
   }
 
-  async getSupportTickets(query: { page?: number; pageSize?: number; status?: SupportTicketStatus }) {
+  async getSupportTickets(query: {
+    page?: number;
+    pageSize?: number;
+    status?: SupportTicketStatus;
+  }) {
     const page = query.page ?? 1;
     const pageSize = query.pageSize ?? 20;
     const skip = (page - 1) * pageSize;
@@ -922,7 +1142,11 @@ export class AdminService {
     const [data, total] = await Promise.all([
       this.prisma.supportTicket.findMany({
         where,
-        include: { user: { select: { id: true, username: true, fullName: true, email: true } } },
+        include: {
+          user: {
+            select: { id: true, username: true, fullName: true, email: true },
+          },
+        },
         orderBy: { createdAt: 'desc' },
         skip,
         take: pageSize,
@@ -932,8 +1156,14 @@ export class AdminService {
     return { data, meta: createPaginationMeta(page, pageSize, total) };
   }
 
-  async replyToSupportTicket(adminUserId: string, ticketId: string, dto: ReplyToTicketDto) {
-    const ticket = await this.prisma.supportTicket.findUnique({ where: { id: ticketId } });
+  async replyToSupportTicket(
+    adminUserId: string,
+    ticketId: string,
+    dto: ReplyToTicketDto,
+  ) {
+    const ticket = await this.prisma.supportTicket.findUnique({
+      where: { id: ticketId },
+    });
     if (!ticket) throw new NotFoundException('Support ticket not found');
     if (ticket.status === SupportTicketStatus.CLOSED) {
       throw new BadRequestException('Cannot reply to a closed ticket');
@@ -942,7 +1172,9 @@ export class AdminService {
       where: { id: ticketId },
       data: {
         adminReply: dto.reply,
-        status: dto.close ? SupportTicketStatus.CLOSED : SupportTicketStatus.REPLIED,
+        status: dto.close
+          ? SupportTicketStatus.CLOSED
+          : SupportTicketStatus.REPLIED,
         repliedAt: new Date(),
         repliedById: adminUserId,
       },
@@ -954,7 +1186,10 @@ export class AdminService {
     const out: Record<string, unknown> = { ...PLATFORM_DEFAULTS };
     for (const r of records) {
       try {
-        out[r.key] = r.key === 'maxFileUploadMB' ? parseInt(r.value, 10) : JSON.parse(r.value);
+        out[r.key] =
+          r.key === 'maxFileUploadMB'
+            ? parseInt(r.value, 10)
+            : JSON.parse(r.value);
       } catch {
         out[r.key] = r.value;
       }
@@ -963,7 +1198,11 @@ export class AdminService {
   }
 
   async updatePlatformSettings(dto: UpdatePlatformSettingsDto) {
-    const keys = ['maintenanceMode', 'registrationEnabled', 'maxFileUploadMB'] as const;
+    const keys = [
+      'maintenanceMode',
+      'registrationEnabled',
+      'maxFileUploadMB',
+    ] as const;
     for (const key of keys) {
       const v = dto[key];
       if (v !== undefined) {

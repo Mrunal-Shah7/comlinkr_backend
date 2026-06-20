@@ -28,4 +28,3 @@ export class CommunityQueryDto extends PaginationDto {
   @Type(() => String)
   sort?: string;
 }
-

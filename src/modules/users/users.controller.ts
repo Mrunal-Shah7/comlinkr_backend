@@ -45,7 +45,9 @@ export class UsersController {
   ) {}
 
   @Get('me')
-  @ApiOperation({ summary: 'Get full profile (relations, stats, achievements)' })
+  @ApiOperation({
+    summary: 'Get full profile (relations, stats, achievements)',
+  })
   @ApiResponse({ status: 200, description: 'Full profile' })
   @ApiResponse({ status: 401, description: 'Not authenticated' })
   async getMyProfile(@CurrentUser('id') userId: string) {
@@ -81,7 +83,10 @@ export class UsersController {
     },
   })
   @ApiResponse({ status: 200, description: 'Avatar URL' })
-  @ApiResponse({ status: 400, description: 'No file / invalid type / too large' })
+  @ApiResponse({
+    status: 400,
+    description: 'No file / invalid type / too large',
+  })
   async uploadAvatar(
     @CurrentUser('id') userId: string,
     @UploadedFile() file: Express.Multer.File,
@@ -185,7 +190,9 @@ export class UsersController {
     @CurrentUser('id') currentUserId: string,
     @Param('id') targetUserId: string,
   ) {
-    return this.settingsService.blockUser(currentUserId, { userId: targetUserId });
+    return this.settingsService.blockUser(currentUserId, {
+      userId: targetUserId,
+    });
   }
 
   @Delete(':id/block')

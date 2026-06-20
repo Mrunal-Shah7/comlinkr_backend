@@ -69,7 +69,8 @@ export class OnboardingService {
     if (!allowed) {
       throw new BadRequestException({
         code: 'REGION_NOT_SUPPORTED',
-        message: 'ComLinkr is currently available in the United States and United Kingdom only.',
+        message:
+          'ComLinkr is currently available in the United States and United Kingdom only.',
       });
     }
   }
@@ -232,9 +233,18 @@ export class OnboardingService {
           countryCode: user.location.countryCode,
           dialCode: user.location.dialCode,
         },
-        vibes: (user.vibes ?? []).map((v) => ({ name: v.name, emoji: v.emoji })),
-        interests: (user.interests ?? []).map((i) => ({ name: i.name, icon: i.icon })),
-        communities: (user.communities ?? []).map((c) => ({ name: c.name, emoji: c.emoji })),
+        vibes: (user.vibes ?? []).map((v) => ({
+          name: v.name,
+          emoji: v.emoji,
+        })),
+        interests: (user.interests ?? []).map((i) => ({
+          name: i.name,
+          icon: i.icon,
+        })),
+        communities: (user.communities ?? []).map((c) => ({
+          name: c.name,
+          emoji: c.emoji,
+        })),
       },
       user: userProfile,
     };

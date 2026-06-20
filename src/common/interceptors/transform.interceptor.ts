@@ -43,7 +43,12 @@ export class TransformInterceptor implements NestInterceptor {
         ) {
           const { data: items, meta } = data as {
             data: unknown;
-            meta: { page: number; limit: number; total: number; totalPages: number };
+            meta: {
+              page: number;
+              limit: number;
+              total: number;
+              totalPages: number;
+            };
           };
           return {
             success: true,

@@ -5,6 +5,9 @@ import sanitizeHtml from 'sanitize-html';
  */
 export function sanitizeInput(text: string): string {
   if (typeof text !== 'string') return '';
-  const stripped = sanitizeHtml(text, { allowedTags: [], allowedAttributes: {} });
+  const stripped = sanitizeHtml(text, {
+    allowedTags: [],
+    allowedAttributes: {},
+  });
   return stripped.trim();
 }

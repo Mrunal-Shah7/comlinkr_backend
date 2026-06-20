@@ -11,4 +11,3 @@ import { MessagingGateway } from './messaging.gateway';
   exports: [MessagingService],
 })
 export class MessagingModule {}
-

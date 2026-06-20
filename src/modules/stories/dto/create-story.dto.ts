@@ -16,7 +16,10 @@ import { StoryMediaType, StoryCategory } from '@prisma/client';
 function parseHashtagsInput(value: unknown): string[] | undefined {
   if (value == null || value === '') return undefined;
   if (Array.isArray(value)) {
-    return value.map(String).map((s) => s.replace(/^#+/, '').trim()).filter(Boolean);
+    return value
+      .map(String)
+      .map((s) => s.replace(/^#+/, '').trim())
+      .filter(Boolean);
   }
   if (typeof value === 'string') {
     const t = value.trim();
@@ -25,7 +28,10 @@ function parseHashtagsInput(value: unknown): string[] | undefined {
       try {
         const j = JSON.parse(t) as unknown;
         if (Array.isArray(j)) {
-          return j.map(String).map((s) => s.replace(/^#+/, '').trim()).filter(Boolean);
+          return j
+            .map(String)
+            .map((s) => s.replace(/^#+/, '').trim())
+            .filter(Boolean);
         }
       } catch {
         return undefined;

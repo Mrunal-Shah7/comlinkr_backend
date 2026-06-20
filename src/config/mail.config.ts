@@ -23,12 +23,27 @@ export function resolveSmtpSettings(configService: ConfigService): {
   pass: string;
   fromEmail: string;
 } {
-  const host = firstConfigString(configService, ['SMTP_HOST', 'MAIL_HOST'], 'smtp.resend.com');
-  const portRaw = firstConfigString(configService, ['SMTP_PORT', 'MAIL_PORT'], '465');
+  const host = firstConfigString(
+    configService,
+    ['SMTP_HOST', 'MAIL_HOST'],
+    'smtp.resend.com',
+  );
+  const portRaw = firstConfigString(
+    configService,
+    ['SMTP_PORT', 'MAIL_PORT'],
+    '465',
+  );
   const port = parseInt(portRaw, 10) || 465;
   const secure = port === 465;
-  const user = firstConfigString(configService, ['SMTP_USER', 'MAIL_USER', 'MAIL_USERNAME']);
-  const pass = firstConfigString(configService, ['SMTP_PASSWORD', 'MAIL_PASSWORD']);
+  const user = firstConfigString(configService, [
+    'SMTP_USER',
+    'MAIL_USER',
+    'MAIL_USERNAME',
+  ]);
+  const pass = firstConfigString(configService, [
+    'SMTP_PASSWORD',
+    'MAIL_PASSWORD',
+  ]);
   const fromEmail = firstConfigString(configService, [
     'SMTP_FROM_EMAIL',
     'MAIL_FROM',
@@ -40,7 +55,9 @@ export function resolveSmtpSettings(configService: ConfigService): {
 }
 
 /** SMTP transporter (Resend or any provider via SMTP_* env). Port 587 = STARTTLS; 465 = implicit TLS. */
-export function createMailTransporter(configService: ConfigService): Transporter {
+export function createMailTransporter(
+  configService: ConfigService,
+): Transporter {
   const { host, port, secure, user, pass } = resolveSmtpSettings(configService);
 
   return nodemailer.createTransport({

@@ -29,7 +29,12 @@ export class CommunityService {
     return location?.city ?? null;
   }
 
-  private formatQuestion(question: any, currentUserId: string, upvotedIds: Set<string>, savedIds: Set<string>) {
+  private formatQuestion(
+    question: any,
+    currentUserId: string,
+    upvotedIds: Set<string>,
+    savedIds: Set<string>,
+  ) {
     return {
       id: question.id,
       title: question.title,
@@ -52,7 +57,11 @@ export class CommunityService {
     };
   }
 
-  private formatAnswer(answer: any, currentUserId: string, upvotedIds: Set<string>) {
+  private formatAnswer(
+    answer: any,
+    currentUserId: string,
+    upvotedIds: Set<string>,
+  ) {
     return {
       id: answer.id,
       content: answer.content,
@@ -231,11 +240,7 @@ export class CommunityService {
     return this.formatQuestion(created, userId, upvotedIds, savedIds);
   }
 
-  async createAnswer(
-    userId: string,
-    questionId: string,
-    dto: CreateAnswerDto,
-  ) {
+  async createAnswer(userId: string, questionId: string, dto: CreateAnswerDto) {
     const question = await this.prisma.communityQuestion.findUnique({
       where: { id: questionId },
       select: { id: true, authorId: true },
@@ -247,7 +252,12 @@ export class CommunityService {
       });
     }
     const authorBlocked = await this.prisma.blockedUser.findUnique({
-      where: { blockerId_blockedId: { blockerId: question.authorId, blockedId: userId } },
+      where: {
+        blockerId_blockedId: {
+          blockerId: question.authorId,
+          blockedId: userId,
+        },
+      },
     });
     if (authorBlocked) {
       throw new ForbiddenException('You cannot answer this question.');
@@ -524,7 +534,9 @@ export class CommunityService {
       ],
       totalVotes: total,
       myVote: myVote ?? undefined,
-      expiresAt: (poll.expiresAt ?? new Date(Date.now() + 86400 * 365 * 10)).toISOString(),
+      expiresAt: (
+        poll.expiresAt ?? new Date(Date.now() + 86400 * 365 * 10)
+      ).toISOString(),
       createdAt: poll.createdAt.toISOString(),
     };
   }
@@ -545,7 +557,8 @@ export class CommunityService {
     }[] = [
       {
         category: 'HOUSING',
-        question: 'Would you rather live in a tiny studio in the city center or a big house 1 hour away?',
+        question:
+          'Would you rather live in a tiny studio in the city center or a big house 1 hour away?',
         optionALabel: 'Live in a tiny studio in the city center',
         optionBLabel: 'Live in a big house 1 hour away',
         votesA: 0,
@@ -553,7 +566,8 @@ export class CommunityService {
       },
       {
         category: 'FOOD',
-        question: 'Would you rather cook at home every day or eat out every meal?',
+        question:
+          'Would you rather cook at home every day or eat out every meal?',
         optionALabel: 'Cook at home every day',
         optionBLabel: 'Eat out every meal',
         votesA: 0,
@@ -561,7 +575,8 @@ export class CommunityService {
       },
       {
         category: 'TRANSIT',
-        question: 'Would you rather walk everywhere (< 30 min) or drive with no traffic ever?',
+        question:
+          'Would you rather walk everywhere (< 30 min) or drive with no traffic ever?',
         optionALabel: 'Walk everywhere (< 30 min)',
         optionBLabel: 'Drive with no traffic ever',
         votesA: 0,
@@ -650,7 +665,9 @@ export class CommunityService {
         const decA = optionId === poll.optionAId;
         await tx.communityPoll.update({
           where: { id: pollId },
-          data: decA ? { votesA: { decrement: 1 } } : { votesB: { decrement: 1 } },
+          data: decA
+            ? { votesA: { decrement: 1 } }
+            : { votesB: { decrement: 1 } },
         });
       });
       const updated = await this.prisma.communityPoll.findUniqueOrThrow({
@@ -705,5 +722,3 @@ export class CommunityService {
     );
   }
 }
-
-

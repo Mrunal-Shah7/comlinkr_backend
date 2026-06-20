@@ -37,7 +37,11 @@ async function bootstrap() {
   const nodeEnv = configService.get<string>('NODE_ENV', 'development');
   // Mobile / Expo web: empty CORS_ORIGINS + dev → reflect Origin so LAN testing works.
   app.enableCors({
-    origin: originList.includes('*') ? true : originList.length > 0 ? originList : nodeEnv !== 'production',
+    origin: originList.includes('*')
+      ? true
+      : originList.length > 0
+        ? originList
+        : nodeEnv !== 'production',
     credentials: true,
   });
 
@@ -62,7 +66,9 @@ async function bootstrap() {
   const port = configService.get<number>('PORT', 4000);
   await app.listen(port, '0.0.0.0');
 
-  console.log(`ComLinkr API listening on 0.0.0.0:${port} (e.g. http://localhost:${port}/api)`);
+  console.log(
+    `ComLinkr API listening on 0.0.0.0:${port} (e.g. http://localhost:${port}/api)`,
+  );
   console.log(`Swagger docs at http://localhost:${port}/api/docs`);
 }
-bootstrap();
+void bootstrap();

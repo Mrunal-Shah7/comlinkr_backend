@@ -89,7 +89,10 @@ export class AdminController {
   }
 
   @Post('polls')
-  createPoll(@CurrentUser('id') userId: string, @Body() dto: CreateAdminPollDto) {
+  createPoll(
+    @CurrentUser('id') userId: string,
+    @Body() dto: CreateAdminPollDto,
+  ) {
     return this.adminService.createAdminPoll(userId, dto);
   }
 
@@ -153,7 +156,10 @@ export class AdminController {
 
   @Patch('roommates/:id/moderate')
   moderateRoommate(@Param('id') id: string, @Body() dto: ModerateActionDto) {
-    return this.adminService.suspendRoommateProfile(id, dto.action as 'suspend' | 'delete');
+    return this.adminService.suspendRoommateProfile(
+      id,
+      dto.action as 'suspend' | 'delete',
+    );
   }
 
   @Get('restaurants')
@@ -204,7 +210,10 @@ export class AdminController {
   }
 
   @Get('notifications/broadcasts')
-  getBroadcastHistory(@Query('page') page?: string, @Query('pageSize') pageSize?: string) {
+  getBroadcastHistory(
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+  ) {
     return this.adminService.getBroadcastHistory({
       page: page ? Number(page) : undefined,
       pageSize: pageSize ? Number(pageSize) : undefined,
@@ -212,7 +221,10 @@ export class AdminController {
   }
 
   @Post('notifications/broadcast')
-  sendBroadcast(@CurrentUser('id') userId: string, @Body() dto: SendBroadcastDto) {
+  sendBroadcast(
+    @CurrentUser('id') userId: string,
+    @Body() dto: SendBroadcastDto,
+  ) {
     return this.adminService.sendBroadcast(userId, dto);
   }
 
@@ -284,10 +296,14 @@ export class AdminController {
     @Param('id') applicationId: string,
     @Body() dto: ApproveBadgeApplicationDto,
   ) {
-    return this.adminService.reviewBadgeApplication(adminUserId, applicationId, {
-      status: 'APPROVED',
-      adminNotes: dto.adminNotes,
-    });
+    return this.adminService.reviewBadgeApplication(
+      adminUserId,
+      applicationId,
+      {
+        status: 'APPROVED',
+        adminNotes: dto.adminNotes,
+      },
+    );
   }
 
   @Patch('badges/applications/:id/reject')
@@ -300,10 +316,14 @@ export class AdminController {
     @Param('id') applicationId: string,
     @Body() dto: RejectBadgeApplicationDto,
   ) {
-    return this.adminService.reviewBadgeApplication(adminUserId, applicationId, {
-      status: 'REJECTED',
-      adminNotes: dto.adminNotes,
-    });
+    return this.adminService.reviewBadgeApplication(
+      adminUserId,
+      applicationId,
+      {
+        status: 'REJECTED',
+        adminNotes: dto.adminNotes,
+      },
+    );
   }
 
   @Patch('badges/applications/:id')
@@ -312,7 +332,11 @@ export class AdminController {
     @Param('id') applicationId: string,
     @Body() dto: ReviewBadgeApplicationDto,
   ) {
-    return this.adminService.reviewBadgeApplication(adminUserId, applicationId, dto);
+    return this.adminService.reviewBadgeApplication(
+      adminUserId,
+      applicationId,
+      dto,
+    );
   }
 
   @Get('users/:id')
@@ -352,5 +376,4 @@ export class AdminController {
   moderateContent(@Param('id') id: string, @Body() dto: ModerateContentDto) {
     return this.adminService.moderateContent(id, dto);
   }
-
 }

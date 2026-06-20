@@ -3,7 +3,12 @@ import { IsIn, IsInt, IsOptional, IsString } from 'class-validator';
 import { Type } from 'class-transformer';
 import { PaginationDto } from '../../../common/dto/pagination.dto';
 
-const SORT_OPTIONS = ['best_match', 'budget', 'move_in_soon', 'verified'] as const;
+const SORT_OPTIONS = [
+  'best_match',
+  'budget',
+  'move_in_soon',
+  'verified',
+] as const;
 
 export class RoommatesQueryDto extends PaginationDto {
   @ApiPropertyOptional({ enum: SORT_OPTIONS, default: 'best_match' })

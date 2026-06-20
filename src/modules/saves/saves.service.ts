@@ -22,7 +22,9 @@ export class SavesService {
     return url;
   }
 
-  private async buildEventImageUrl(imageUrl: string | null | undefined): Promise<string> {
+  private async buildEventImageUrl(
+    imageUrl: string | null | undefined,
+  ): Promise<string> {
     if (imageUrl == null || imageUrl === '') return '';
     return this.storageService.getReadUrlForClient(imageUrl);
   }
@@ -81,7 +83,11 @@ export class SavesService {
     };
   }
 
-  private formatListing(listing: any, userId: string, isSavedOverride: boolean) {
+  private formatListing(
+    listing: any,
+    userId: string,
+    isSavedOverride: boolean,
+  ) {
     const isInterested = (listing.interests?.length ?? 0) > 0;
     const interestCount =
       listing._count?.interests ?? listing.interests?.length ?? 0;
@@ -313,9 +319,11 @@ export class SavesService {
         avatarUrl: event.author.avatarUrl
           ? await this.buildEventImageUrl(event.author.avatarUrl)
           : null,
-        badges: (event.author.userBadges ?? []).map((b: { badgeType: string }) => ({
-          badgeType: b.badgeType,
-        })),
+        badges: (event.author.userBadges ?? []).map(
+          (b: { badgeType: string }) => ({
+            badgeType: b.badgeType,
+          }),
+        ),
       },
       isAttending: !!isAttending,
       registeredByMe: !!isAttending,
@@ -337,23 +345,16 @@ export class SavesService {
     const limit = query.limit ?? 20;
 
     if (!query.type) {
-      const [
-        news,
-        events,
-        listings,
-        food,
-        community,
-        stories,
-        roommates,
-      ] = await Promise.all([
-        this.prisma.newsArticleSave.count({ where: { userId } }), // SPRINT-30: live news article saves
-        this.prisma.eventSave.count({ where: { userId } }),
-        this.prisma.housingSave.count({ where: { userId } }),
-        this.prisma.restaurantSave.count({ where: { userId } }),
-        this.prisma.communitySave.count({ where: { userId } }),
-        this.prisma.storySave.count({ where: { userId } }),
-        this.prisma.roommateSave.count({ where: { userId } }),
-      ]);
+      const [news, events, listings, food, community, stories, roommates] =
+        await Promise.all([
+          this.prisma.newsArticleSave.count({ where: { userId } }), // SPRINT-30: live news article saves
+          this.prisma.eventSave.count({ where: { userId } }),
+          this.prisma.housingSave.count({ where: { userId } }),
+          this.prisma.restaurantSave.count({ where: { userId } }),
+          this.prisma.communitySave.count({ where: { userId } }),
+          this.prisma.storySave.count({ where: { userId } }),
+          this.prisma.roommateSave.count({ where: { userId } }),
+        ]);
       return {
         counts: {
           news,
@@ -463,7 +464,10 @@ export class SavesService {
         ]);
         const data = rows.map((r) => {
           const listing = r.listing;
-          const withCount = { ...listing, interestCount: listing._count.interests };
+          const withCount = {
+            ...listing,
+            interestCount: listing._count.interests,
+          };
           return {
             savedItemType: 'listing' as const,
             savedAt: r.createdAt,
@@ -488,7 +492,9 @@ export class SavesService {
             include: {
               restaurant: {
                 include: {
-                  owner: { include: { userBadges: { select: { badgeType: true } } } },
+                  owner: {
+                    include: { userBadges: { select: { badgeType: true } } },
+                  },
                   images: { orderBy: { order: 'asc' } },
                   favorites: { where: { userId }, select: { id: true } },
                   saves: { where: { userId }, select: { id: true } },
@@ -501,7 +507,13 @@ export class SavesService {
         const data = rows.map((r) => ({
           savedItemType: 'food' as const,
           savedAt: r.createdAt,
-          ...this.formatRestaurant(r.restaurant, userId, userLat, userLon, true),
+          ...this.formatRestaurant(
+            r.restaurant,
+            userId,
+            userLat,
+            userLon,
+            true,
+          ),
         }));
         return { data, meta: createPaginationMeta(page, limit, total) };
       }

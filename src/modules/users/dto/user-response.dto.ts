@@ -201,4 +201,3 @@ export class UserResponseDto {
   @ApiProperty({ type: [AchievementDto] })
   achievements: AchievementDto[];
 }
-

@@ -44,11 +44,19 @@ export class FoodController {
   @ApiQuery({ name: 'page', required: false })
   @ApiQuery({ name: 'limit', required: false })
   @ApiQuery({ name: 'cuisine', required: false })
-  @ApiQuery({ name: 'priceRange', required: false, enum: ['BUDGET', 'MODERATE', 'PREMIUM', 'LUXURY'] })
+  @ApiQuery({
+    name: 'priceRange',
+    required: false,
+    enum: ['BUDGET', 'MODERATE', 'PREMIUM', 'LUXURY'],
+  })
   @ApiQuery({ name: 'service', required: false })
   @ApiQuery({ name: 'city', required: false })
   @ApiQuery({ name: 'search', required: false })
-  @ApiQuery({ name: 'sort', required: false, enum: ['rating', 'distance', 'newest'] })
+  @ApiQuery({
+    name: 'sort',
+    required: false,
+    enum: ['rating', 'distance', 'newest'],
+  })
   @ApiResponse({ status: 200, description: 'Paginated restaurants' })
   async getRestaurants(
     @CurrentUser('id') userId: string,
@@ -95,7 +103,9 @@ export class FoodController {
 
   // SPRINT-29: reservation management — literal `reservations` segment before `:id` routes
   @Patch('reservations/:reservationId/cancel')
-  @ApiOperation({ summary: 'Cancel a reservation (reserver or restaurant owner)' })
+  @ApiOperation({
+    summary: 'Cancel a reservation (reserver or restaurant owner)',
+  })
   async cancelReservation(
     @CurrentUser('id') userId: string,
     @Param('reservationId') reservationId: string,
@@ -118,10 +128,7 @@ export class FoodController {
   @ApiQuery({ name: 'limit', required: false })
   @ApiResponse({ status: 200, description: 'Paginated reviews' })
   @ApiResponse({ status: 404, description: 'Restaurant not found' })
-  async getReviews(
-    @Param('id') id: string,
-    @Query() query: PaginationDto,
-  ) {
+  async getReviews(@Param('id') id: string, @Query() query: PaginationDto) {
     return this.foodService.getReviews(id, query);
   }
 
@@ -163,13 +170,21 @@ export class FoodController {
 
   @Get(':id/reservations')
   @ApiOperation({ summary: 'List reservations for a restaurant (owner only)' })
-  @ApiQuery({ name: 'status', required: false, enum: ['PENDING', 'CONFIRMED', 'CANCELLED'] })
+  @ApiQuery({
+    name: 'status',
+    required: false,
+    enum: ['PENDING', 'CONFIRMED', 'CANCELLED'],
+  })
   async getRestaurantReservations(
     @CurrentUser('id') userId: string,
     @Param('id') restaurantId: string,
     @Query('status') status?: string,
   ) {
-    return this.foodService.getRestaurantReservations(userId, restaurantId, status);
+    return this.foodService.getRestaurantReservations(
+      userId,
+      restaurantId,
+      status,
+    );
   }
 
   @Get(':id')
@@ -184,7 +199,10 @@ export class FoodController {
   }
 
   @Post()
-  @ApiOperation({ summary: 'Create restaurant (verified owner badge adds trust on the listing)' })
+  @ApiOperation({
+    summary:
+      'Create restaurant (verified owner badge adds trust on the listing)',
+  })
   @ApiResponse({ status: 201, description: 'Restaurant created' })
   async createRestaurant(
     @CurrentUser('id') userId: string,

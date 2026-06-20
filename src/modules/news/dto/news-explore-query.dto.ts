@@ -1,6 +1,15 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
-import { IsBoolean, IsIn, IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
+import {
+  IsBoolean,
+  IsIn,
+  IsInt,
+  IsOptional,
+  IsString,
+  Max,
+  MaxLength,
+  Min,
+} from 'class-validator';
 
 export class NewsExploreQueryDto {
   @ApiPropertyOptional({ example: 'Los Angeles' })
@@ -15,7 +24,10 @@ export class NewsExploreQueryDto {
   @MaxLength(120)
   country?: string;
 
-  @ApiPropertyOptional({ example: 'Alabama', description: 'State/region for local news fallback' }) // SPRINT-30
+  @ApiPropertyOptional({
+    example: 'Alabama',
+    description: 'State/region for local news fallback',
+  }) // SPRINT-30
   @IsOptional()
   @IsString()
   @MaxLength(100)

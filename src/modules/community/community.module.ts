@@ -9,4 +9,3 @@ import { CommunityController } from './community.controller';
   controllers: [CommunityController],
 })
 export class CommunityModule {}
-

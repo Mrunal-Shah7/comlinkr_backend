@@ -1,11 +1,4 @@
-import {
-  Body,
-  Controller,
-  Get,
-  Param,
-  Post,
-  Query,
-} from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import {
   ApiTags,
   ApiOperation,
@@ -28,7 +21,9 @@ export class CommunityController {
   constructor(private readonly communityService: CommunityService) {}
 
   @Get('polls')
-  @ApiOperation({ summary: 'Active Would You Rather–style polls for your city' })
+  @ApiOperation({
+    summary: 'Active Would You Rather–style polls for your city',
+  })
   @ApiResponse({ status: 200, description: 'List of polls with vote tallies' })
   async getPolls(
     @CurrentUser('id') userId: string,
@@ -38,7 +33,10 @@ export class CommunityController {
   }
 
   @Post('polls/:id/vote')
-  @ApiOperation({ summary: 'Vote, change vote, or clear vote (same option again removes your vote)' })
+  @ApiOperation({
+    summary:
+      'Vote, change vote, or clear vote (same option again removes your vote)',
+  })
   @ApiBody({ type: VotePollDto })
   @ApiResponse({ status: 200, description: 'Updated poll' })
   async votePoll(
@@ -72,7 +70,9 @@ export class CommunityController {
   }
 
   @Get('stats')
-  @ApiOperation({ summary: 'Get community stats for a city (or user profile city)' })
+  @ApiOperation({
+    summary: 'Get community stats for a city (or user profile city)',
+  })
   @ApiResponse({ status: 200, description: 'Members, questions, answers' })
   async getCommunityStats(
     @CurrentUser('id') userId: string,
@@ -144,4 +144,3 @@ export class CommunityController {
     return this.communityService.toggleAnswerUpvote(userId, id);
   }
 }
-

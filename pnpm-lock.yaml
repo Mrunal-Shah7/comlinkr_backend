@@ -77,6 +77,9 @@ importers:
       cookie-signature:
         specifier: ^1.2.2
         version: 1.2.2
+      dotenv:
+        specifier: ^17.4.2
+        version: 17.4.2
       express-session:
         specifier: ^1.19.0
         version: 1.19.0
@@ -104,6 +107,9 @@ importers:
       pg:
         specifier: ^8.18.0
         version: 8.22.0
+      prisma:
+        specifier: ^7.8.0
+        version: 7.8.0(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(typescript@5.9.3)
       qrcode:
         specifier: ^1.5.4
         version: 1.5.4
@@ -180,9 +186,6 @@ importers:
       '@types/supertest':
         specifier: ^6.0.2
         version: 6.0.3
-      dotenv:
-        specifier: ^17.4.2
-        version: 17.4.2
       eslint:
         specifier: ^9.18.0
         version: 9.39.4(jiti@2.7.0)
@@ -201,9 +204,6 @@ importers:
       prettier:
         specifier: ^3.4.2
         version: 3.8.4
-      prisma:
-        specifier: ^7.8.0
-        version: 7.8.0(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)(typescript@5.9.3)
       source-map-support:
         specifier: ^0.5.21
         version: 0.5.21

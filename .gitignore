@@ -5,4 +5,7 @@ node_modules
 /generated/prisma
 /test-payloads
 /dist
+prisma.config.js
+prisma.config.d.ts
+prisma.config.js.map
 graphify-out/

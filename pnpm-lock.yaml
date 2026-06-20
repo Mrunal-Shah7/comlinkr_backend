@@ -74,6 +74,9 @@ importers:
       connect-redis:
         specifier: ^9.0.0
         version: 9.0.0(express-session@1.19.0)(redis@5.12.1)
+      cookie-signature:
+        specifier: ^1.2.2
+        version: 1.2.2
       express-session:
         specifier: ^1.19.0
         version: 1.19.0

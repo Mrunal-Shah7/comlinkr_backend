@@ -558,7 +558,7 @@ export class AuthService {
       const decoded = await appleSignin.verifyIdToken(dto.idToken, {
         audience: clientId,
       });
-      payload = decoded as any;
+      payload = decoded;
     } catch {
       throw new UnauthorizedException({
         message: 'Invalid Apple authentication token.',

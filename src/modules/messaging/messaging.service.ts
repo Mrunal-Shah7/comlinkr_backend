@@ -514,7 +514,7 @@ export class MessagingService {
       });
       result.push(
         await this.formatConversation(
-          conv as any,
+          conv,
           userId,
           unreadCount,
           listingTitleMap,
@@ -573,12 +573,7 @@ export class MessagingService {
       conv.contextType,
       conv.contextId,
     );
-    return this.formatConversation(
-      conv as any,
-      userId,
-      unreadCount,
-      listingTitleMap,
-    );
+    return this.formatConversation(conv, userId, unreadCount, listingTitleMap);
   }
 
   async createConversation(
@@ -632,10 +627,7 @@ export class MessagingService {
       contextId,
     );
     if (existingDirect) {
-      return this.returnExistingDirectConversation(
-        userId,
-        existingDirect as any,
-      );
+      return this.returnExistingDirectConversation(userId, existingDirect);
     }
 
     try {
@@ -664,12 +656,7 @@ export class MessagingService {
         fullConv.contextType,
         fullConv.contextId,
       );
-      return this.formatConversation(
-        fullConv as any,
-        userId,
-        0,
-        listingTitleMap,
-      );
+      return this.formatConversation(fullConv, userId, 0, listingTitleMap);
     } catch (e) {
       if (
         e instanceof Prisma.PrismaClientKnownRequestError &&
@@ -682,7 +669,7 @@ export class MessagingService {
           contextId,
         );
         if (again) {
-          return this.returnExistingDirectConversation(userId, again as any);
+          return this.returnExistingDirectConversation(userId, again);
         }
       }
       throw e;
@@ -824,7 +811,7 @@ export class MessagingService {
       data: { lastReadAt: now },
     });
 
-    const formatted = this.formatMessage(message as any, userId);
+    const formatted = this.formatMessage(message, userId);
     const g = this.getGateway();
     if (g && typeof g.emitNewMessage === 'function') {
       g.emitNewMessage(conversationId, formatted);

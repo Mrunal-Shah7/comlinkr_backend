@@ -11,7 +11,7 @@ export class RedisService implements OnModuleInit {
       'REDIS_URL',
       'redis://localhost:6379',
     );
-    this.client = createClient({ url }) as RedisClientType;
+    this.client = createClient({ url });
     this.client.on('error', (err) => console.error('Redis client error:', err));
   }
 

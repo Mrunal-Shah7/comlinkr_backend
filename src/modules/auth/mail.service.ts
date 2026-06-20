@@ -1,8 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
-  createMailTransporter,
-  resolveSmtpSettings,
+  createResendClient,
+  resolveMailSettings,
 } from '../../config/mail.config';
 
 @Injectable()
@@ -14,25 +14,21 @@ export class MailService {
     code: string,
     type: 'REGISTRATION' | 'PASSWORD_RESET',
   ): Promise<void> {
-    const {
-      user: smtpUser,
-      pass: smtpPass,
-      fromEmail,
-    } = resolveSmtpSettings(this.configService);
+    const { apiKey, fromEmail } = resolveMailSettings(this.configService);
     const isDev = this.configService.get<string>('NODE_ENV') === 'development';
     const credentialsMissing =
-      !smtpUser || !smtpPass || !fromEmail || smtpPass === 'placeholder';
+      !apiKey || !fromEmail || apiKey === 'placeholder';
 
     if (credentialsMissing) {
       if (isDev) {
         console.log(
-          `[DEV] No SMTP credentials — OTP logged only: ${to} (${type}): ${code}`,
+          `[DEV] No Resend credentials — OTP logged only: ${to} (${type}): ${code}`,
         );
       }
       return;
     }
 
-    const transporter = createMailTransporter(this.configService);
+    const resend = createResendClient(this.configService);
 
     const subject =
       type === 'REGISTRATION'
@@ -61,7 +57,7 @@ export class MailService {
 </html>`;
 
     try {
-      await transporter.sendMail({
+      await resend.emails.send({
         from: `"ComLinkr" <${fromEmail}>`,
         to,
         subject,

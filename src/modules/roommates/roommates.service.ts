@@ -464,7 +464,7 @@ export class RoommatesService {
     });
 
     const withScores = users.map((u) => ({
-      user: u as UserWithRelations,
+      user: u,
       score: this.computeCompatibilityScore(
         currentUser as UserWithRelations,
         u as UserWithRelations,
@@ -519,7 +519,7 @@ export class RoommatesService {
       };
       return this.formatRoommateCard(
         user,
-        currentUser as UserWithRelations,
+        currentUser,
         score,
         savedSet.has(user.id),
         conn.status,

@@ -1,6 +1,5 @@
 import { ConfigService } from '@nestjs/config';
-import * as nodemailer from 'nodemailer';
-import type { Transporter } from 'nodemailer';
+import { Resend } from 'resend';
 
 function firstConfigString(
   configService: ConfigService,
@@ -14,60 +13,25 @@ function firstConfigString(
   return fallback;
 }
 
-/** Resolved SMTP + from-address (provider-agnostic SMTP_* env names). */
-export function resolveSmtpSettings(configService: ConfigService): {
-  host: string;
-  port: number;
-  secure: boolean;
-  user: string;
-  pass: string;
+/** Resolved Resend API key and from-address. */
+export function resolveMailSettings(configService: ConfigService): {
+  apiKey: string;
   fromEmail: string;
 } {
-  const host = firstConfigString(
-    configService,
-    ['SMTP_HOST', 'MAIL_HOST'],
-    'smtp.resend.com',
-  );
-  const portRaw = firstConfigString(
-    configService,
-    ['SMTP_PORT', 'MAIL_PORT'],
-    '465',
-  );
-  const port = parseInt(portRaw, 10) || 465;
-  const secure = port === 465;
-  const user = firstConfigString(configService, [
-    'SMTP_USER',
-    'MAIL_USER',
-    'MAIL_USERNAME',
-  ]);
-  const pass = firstConfigString(configService, [
-    'SMTP_PASSWORD',
-    'MAIL_PASSWORD',
-  ]);
+  const apiKey = firstConfigString(configService, ['RESEND_API_KEY']);
   const fromEmail = firstConfigString(configService, [
+    'RESEND_FROM_EMAIL',
     'SMTP_FROM_EMAIL',
     'MAIL_FROM',
     'MAIL_FROM_ADDRESS',
     'MAIL_FROM_EMAIL',
   ]);
 
-  return { host, port, secure, user, pass, fromEmail };
+  return { apiKey, fromEmail };
 }
 
-/** SMTP transporter (Resend or any provider via SMTP_* env). Port 587 = STARTTLS; 465 = implicit TLS. */
-export function createMailTransporter(
-  configService: ConfigService,
-): Transporter {
-  const { host, port, secure, user, pass } = resolveSmtpSettings(configService);
-
-  return nodemailer.createTransport({
-    host,
-    port,
-    secure,
-    requireTLS: !secure,
-    auth: {
-      user: user || undefined,
-      pass: pass || undefined,
-    },
-  });
+/** Resend HTTP API client. */
+export function createResendClient(configService: ConfigService): Resend {
+  const { apiKey } = resolveMailSettings(configService);
+  return new Resend(apiKey);
 }

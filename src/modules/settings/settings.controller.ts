@@ -10,7 +10,7 @@ import {
   Post,
   Req,
 } from '@nestjs/common';
-import { ApiTags } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger'; // SPRINT-32: immediate delete Swagger docs
 import type { Request } from 'express';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { SettingsService } from './settings.service';
@@ -95,6 +95,18 @@ export class SettingsController {
         else resolve(result);
       });
     });
+  }
+
+  @Post('delete-account/immediate') // SPRINT-32: immediate hard-delete path for Apple compliance
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Immediately and permanently delete account' }) // SPRINT-32
+  @ApiResponse({ status: 200, description: 'Account permanently deleted' }) // SPRINT-32
+  @ApiResponse({ status: 404, description: 'User not found' }) // SPRINT-32
+  async deleteAccountImmediately(
+    @CurrentUser('id') userId: string,
+    @Req() req: Request,
+  ) {
+    return this.settingsService.deleteAccountImmediately(userId, req.session); // SPRINT-32
   }
 
   @Post('cancel-deletion')

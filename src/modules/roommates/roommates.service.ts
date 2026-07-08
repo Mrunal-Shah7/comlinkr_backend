@@ -766,6 +766,37 @@ export class RoommatesService {
     };
   }
 
+  async cancelConnectionRequest( // SPRINT-33: sender-side withdrawal endpoint for pending roommate requests
+    userId: string, // SPRINT-33: authenticated sender attempting cancellation
+    targetId: string, // SPRINT-33: recipient whose pending request should be withdrawn
+  ): Promise<{ message: string }> { // SPRINT-33: API response contract
+    const targetUser = await this.prisma.user.findUnique({ // SPRINT-33: validate recipient existence first
+      where: { id: targetId }, // SPRINT-33: lookup by target user id
+      select: { id: true }, // SPRINT-33: minimal projection for existence check
+    }); // SPRINT-33
+    if (!targetUser) { // SPRINT-33: 404 when recipient does not exist
+      throw new NotFoundException('User not found'); // SPRINT-33: explicit sprint-required error message
+    } // SPRINT-33
+
+    const connectionStatus = await this.getConnectionStatus(userId, targetId); // SPRINT-33: determine relationship from sender perspective
+    if (connectionStatus.status !== 'pending_sent') { // SPRINT-33: only the original sender can cancel outgoing pending requests
+      throw new BadRequestException('No outgoing connection request to cancel'); // SPRINT-33: sprint-required guard message
+    } // SPRINT-33
+
+    const conversationId = connectionStatus.conversationId; // SPRINT-33: conversation to reset/delete
+    if (!conversationId) { // SPRINT-33: defensive guard for inconsistent state
+      throw new BadRequestException('No outgoing connection request to cancel'); // SPRINT-33: consistent client-facing error
+    } // SPRINT-33
+
+    await this.prisma.$transaction(async (tx) => { // SPRINT-33: atomic cleanup for request withdrawal
+      await tx.message.deleteMany({ where: { conversationId } }); // SPRINT-33: delete system + user messages first to satisfy FK ordering
+      await tx.conversationMember.deleteMany({ where: { conversationId } }); // SPRINT-33: remove both member rows for the direct thread
+      await tx.conversation.delete({ where: { id: conversationId } }); // SPRINT-33: remove conversation to reset state to null
+    }); // SPRINT-33
+
+    return { message: 'Connection request cancelled' }; // SPRINT-33: success payload
+  } // SPRINT-33
+
   async acceptConnectionRequest(currentUserId: string, requesterId: string) {
     const conv = await this.findDirectConversationBetween(
       currentUserId,

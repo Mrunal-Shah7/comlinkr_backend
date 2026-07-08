@@ -291,6 +291,7 @@ model User {
   deletedAt            DateTime?
   onboardingCompleted  Boolean   @default(false)
   agreementAcceptedAt  DateTime?
+  termsAcceptedVersion String?   @db.VarChar(20) // SPRINT-32: server-side terms version audit
   lastActiveAt         DateTime?
   createdAt            DateTime  @default(now())
   updatedAt            DateTime  @updatedAt
@@ -706,6 +707,7 @@ model Restaurant {
   longitude          Float?
   phoneNumber        String?
   priceRange         PriceRange
+  avgPricePerPerson  Int?      // SPRINT-33: persist optional average spend per diner
   averageRating      Decimal   @default(0)
   totalReviews       Int       @default(0)
   distanceMiles      Decimal?

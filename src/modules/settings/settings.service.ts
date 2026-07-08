@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger, // SPRINT-32: session destroy warnings on immediate delete
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -22,6 +23,8 @@ const BCRYPT_ROUNDS = 12;
 
 @Injectable()
 export class SettingsService {
+  private readonly logger = new Logger(SettingsService.name); // SPRINT-32: immediate delete diagnostics
+
   constructor(private readonly prisma: PrismaService) {}
 
   async getAccount(userId: string) {
@@ -311,5 +314,309 @@ export class SettingsService {
       data: { isActive: true, deletedAt: null },
     });
     return { message: 'Account deletion cancelled. Welcome back!' };
+  }
+
+  /** SPRINT-32: Shared cascading hard-delete used by CRON and immediate-delete endpoint. */
+  async performHardDelete(userId: string): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      // SPRINT-32: many-to-many join tables (_UserVibes, _UserInterests, _UserCommunities)
+      await tx.user.update({
+        where: { id: userId },
+        data: {
+          vibes: { set: [] },
+          interests: { set: [] },
+          communities: { set: [] },
+        },
+      });
+
+      const feedPostIds = (
+        await tx.feedPost.findMany({
+          where: { authorId: userId },
+          select: { id: true },
+        })
+      ).map((p) => p.id);
+      if (feedPostIds.length) {
+        await tx.feedLike.deleteMany({
+          where: { feedPostId: { in: feedPostIds } },
+        });
+        await tx.feedComment.deleteMany({
+          where: { feedPostId: { in: feedPostIds } },
+        });
+        await tx.feedSave.deleteMany({
+          where: { feedPostId: { in: feedPostIds } },
+        });
+        await tx.feedPostMedia.deleteMany({
+          where: { feedPostId: { in: feedPostIds } },
+        });
+      }
+      await tx.feedLike.deleteMany({ where: { userId } });
+      await tx.feedComment.deleteMany({ where: { userId } });
+      await tx.feedSave.deleteMany({ where: { userId } });
+      await tx.feedPost.deleteMany({ where: { authorId: userId } });
+
+      const listingIds = (
+        await tx.housingListing.findMany({
+          where: { ownerId: userId },
+          select: { id: true },
+        })
+      ).map((l) => l.id);
+      if (listingIds.length) {
+        await tx.housingSave.deleteMany({
+          where: { listingId: { in: listingIds } },
+        });
+        await tx.housingInterest.deleteMany({
+          where: { listingId: { in: listingIds } },
+        });
+        await tx.housingImage.deleteMany({
+          where: { listingId: { in: listingIds } },
+        });
+      }
+      await tx.housingSave.deleteMany({ where: { userId } });
+      await tx.housingInterest.deleteMany({ where: { userId } });
+      await tx.housingListing.deleteMany({ where: { ownerId: userId } });
+
+      const sharedSpaceIds = (
+        await tx.sharedSpace.findMany({
+          where: { ownerId: userId },
+          select: { id: true },
+        })
+      ).map((s) => s.id);
+      if (sharedSpaceIds.length) {
+        await tx.sharedSpaceSave.deleteMany({
+          where: { sharedSpaceId: { in: sharedSpaceIds } },
+        });
+        await tx.sharedSpaceApplication.deleteMany({
+          where: { sharedSpaceId: { in: sharedSpaceIds } },
+        });
+        await tx.sharedSpaceImage.deleteMany({
+          where: { sharedSpaceId: { in: sharedSpaceIds } },
+        });
+      }
+      await tx.sharedSpaceSave.deleteMany({ where: { userId } });
+      await tx.sharedSpaceApplication.deleteMany({ where: { userId } });
+      await tx.sharedSpace.deleteMany({ where: { ownerId: userId } });
+
+      const restaurantIds = (
+        await tx.restaurant.findMany({
+          where: { ownerId: userId },
+          select: { id: true },
+        })
+      ).map((r) => r.id);
+      if (restaurantIds.length) {
+        await tx.restaurantSave.deleteMany({
+          where: { restaurantId: { in: restaurantIds } },
+        });
+        await tx.restaurantFavorite.deleteMany({
+          where: { restaurantId: { in: restaurantIds } },
+        });
+        await tx.restaurantReservation.deleteMany({
+          where: { restaurantId: { in: restaurantIds } },
+        });
+        await tx.restaurantReview.deleteMany({
+          where: { restaurantId: { in: restaurantIds } },
+        });
+        await tx.restaurantImage.deleteMany({
+          where: { restaurantId: { in: restaurantIds } },
+        });
+      }
+      await tx.restaurantSave.deleteMany({ where: { userId } });
+      await tx.restaurantFavorite.deleteMany({ where: { userId } });
+      await tx.restaurantReservation.deleteMany({ where: { userId } });
+      await tx.restaurantReview.deleteMany({ where: { userId } });
+      await tx.restaurant.deleteMany({ where: { ownerId: userId } });
+
+      const questionIds = (
+        await tx.communityQuestion.findMany({
+          where: { authorId: userId },
+          select: { id: true },
+        })
+      ).map((q) => q.id);
+      if (questionIds.length) {
+        const answerIds = (
+          await tx.communityAnswer.findMany({
+            where: { questionId: { in: questionIds } },
+            select: { id: true },
+          })
+        ).map((a) => a.id);
+        if (answerIds.length) {
+          await tx.communityUpvote.deleteMany({
+            where: { targetType: 'ANSWER', targetId: { in: answerIds } },
+          }); // SPRINT-32: upvotes on answers under user's questions
+        }
+        await tx.communityUpvote.deleteMany({
+          where: { targetType: 'QUESTION', targetId: { in: questionIds } },
+        }); // SPRINT-32: upvotes on user's questions
+        await tx.communityAnswer.deleteMany({
+          where: { questionId: { in: questionIds } },
+        });
+        await tx.communitySave.deleteMany({
+          where: { questionId: { in: questionIds } },
+        });
+      }
+      await tx.communityAnswer.deleteMany({ where: { authorId: userId } });
+      await tx.communityUpvote.deleteMany({ where: { userId } });
+      await tx.communitySave.deleteMany({ where: { userId } });
+      await tx.communityQuestion.deleteMany({ where: { authorId: userId } });
+      await tx.communityPollVote.deleteMany({ where: { userId } });
+      await tx.neighborhoodMoodVote.deleteMany({ where: { userId } });
+
+      const conversationIds = (
+        await tx.conversation.findMany({
+          where: { createdById: userId },
+          select: { id: true },
+        })
+      ).map((c) => c.id);
+      if (conversationIds.length) {
+        await tx.message.deleteMany({
+          where: { conversationId: { in: conversationIds } },
+        });
+        await tx.conversationMember.deleteMany({
+          where: { conversationId: { in: conversationIds } },
+        });
+      }
+      await tx.message.deleteMany({ where: { senderId: userId } });
+      await tx.conversationMember.deleteMany({ where: { userId } });
+      await tx.conversation.deleteMany({ where: { createdById: userId } });
+
+      const eventIds = (
+        await tx.event.findMany({
+          where: { authorId: userId },
+          select: { id: true },
+        })
+      ).map((e) => e.id);
+      if (eventIds.length) {
+        await tx.eventSave.deleteMany({ where: { eventId: { in: eventIds } } });
+        await tx.eventAttendee.deleteMany({
+          where: { eventId: { in: eventIds } },
+        });
+        await tx.eventImage.deleteMany({ where: { eventId: { in: eventIds } } });
+      }
+      await tx.eventSave.deleteMany({ where: { userId } });
+      await tx.eventAttendee.deleteMany({ where: { userId } });
+      await tx.event.deleteMany({ where: { authorId: userId } });
+
+      const storyIds = (
+        await tx.story.findMany({
+          where: { authorId: userId },
+          select: { id: true },
+        })
+      ).map((s) => s.id);
+      if (storyIds.length) {
+        await tx.storyComment.deleteMany({ where: { storyId: { in: storyIds } } });
+        await tx.storyLike.deleteMany({ where: { storyId: { in: storyIds } } });
+        await tx.storySave.deleteMany({ where: { storyId: { in: storyIds } } });
+      }
+      await tx.storyComment.deleteMany({ where: { authorId: userId } });
+      await tx.storyLike.deleteMany({ where: { userId } });
+      await tx.storySave.deleteMany({ where: { userId } });
+      await tx.story.deleteMany({ where: { authorId: userId } });
+
+      const challengeIds = (
+        await tx.challenge.findMany({
+          where: { authorId: userId },
+          select: { id: true },
+        })
+      ).map((c) => c.id);
+      if (challengeIds.length) {
+        await tx.challengeParticipant.deleteMany({
+          where: { challengeId: { in: challengeIds } },
+        });
+      }
+      await tx.challengeParticipant.deleteMany({ where: { userId } });
+      await tx.challenge.deleteMany({ where: { authorId: userId } });
+
+      const applicationIds = (
+        await tx.badgeApplication.findMany({
+          where: { userId },
+          select: { id: true },
+        })
+      ).map((a) => a.id);
+      if (applicationIds.length) {
+        await tx.badgeDocument.deleteMany({
+          where: { applicationId: { in: applicationIds } },
+        });
+      }
+      await tx.userBadge.deleteMany({ where: { userId } });
+      await tx.badgeApplication.deleteMany({ where: { userId } });
+
+      await tx.notification.deleteMany({ where: { userId } });
+      await tx.notificationPreference.deleteMany({ where: { userId } });
+      await tx.privacySettings.deleteMany({ where: { userId } });
+      await tx.blockedUser.deleteMany({
+        where: { OR: [{ blockerId: userId }, { blockedId: userId }] },
+      });
+      await tx.roommateSave.deleteMany({
+        where: { OR: [{ userId }, { savedUserId: userId }] },
+      });
+      await tx.pushToken.deleteMany({ where: { userId } });
+      await tx.pushDevice.deleteMany({ where: { userId } });
+      await tx.broadcastNotification.deleteMany({ where: { sentById: userId } });
+      await tx.supportTicket.deleteMany({ where: { userId } });
+      await tx.adminPollVote.deleteMany({ where: { userId } });
+      const adminPollIds = (
+        await tx.adminPoll.findMany({
+          where: { createdById: userId },
+          select: { id: true },
+        })
+      ).map((p) => p.id);
+      if (adminPollIds.length) {
+        await tx.adminPollVote.deleteMany({
+          where: { pollId: { in: adminPollIds } },
+        });
+        await tx.adminPollOption.deleteMany({
+          where: { pollId: { in: adminPollIds } },
+        });
+      }
+      await tx.adminPoll.deleteMany({ where: { createdById: userId } });
+      await tx.contentReport.deleteMany({ where: { reporterId: userId } });
+      await tx.listingReport.deleteMany({ where: { reporterId: userId } });
+      await tx.newsArticleLike.deleteMany({ where: { userId } });
+      await tx.newsArticleComment.deleteMany({ where: { userId } });
+      await tx.newsArticleSave.deleteMany({ where: { userId } });
+
+      await tx.authProvider.deleteMany({ where: { userId } });
+      await tx.userLocation.deleteMany({ where: { userId } });
+      await tx.roommatePreferences.deleteMany({ where: { userId } });
+
+      await tx.user.delete({ where: { id: userId } });
+    });
+  }
+
+  /** SPRINT-32: Immediate irreversible account deletion (no 15-day grace period). */
+  async deleteAccountImmediately(
+    userId: string,
+    session: { destroy: (cb: (err?: Error) => void) => void },
+  ): Promise<{ deleted: boolean }> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { isActive: true, deletedAt: true },
+    });
+    if (!user) {
+      throw new NotFoundException('User not found'); // SPRINT-32: explicit 404 message
+    }
+    const now = new Date();
+    if (
+      user.isActive === false &&
+      user.deletedAt != null &&
+      user.deletedAt <= now
+    ) {
+      throw new BadRequestException(
+        'Account is already pending deletion or has been deleted',
+      ); // SPRINT-32: block double-delete after grace period elapsed
+    }
+
+    await new Promise<void>((resolve) => {
+      session.destroy((err) => {
+        if (err) {
+          this.logger.warn(
+            `Session destroy failed during immediate delete for user ${userId}: ${err}`,
+          ); // SPRINT-32: log but continue with hard delete
+        }
+        resolve();
+      });
+    });
+
+    await this.performHardDelete(userId); // SPRINT-32: same cascade as nightly CRON
+    return { deleted: true };
   }
 }

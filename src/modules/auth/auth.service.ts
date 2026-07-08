@@ -2,6 +2,8 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger, // SPRINT-32: diagnostic logging for Apple token verification
+  ServiceUnavailableException, // SPRINT-32: guard missing Apple Sign-In env vars
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -38,6 +40,7 @@ export interface UserResponse {
   phoneNumber: string | null;
   role: string;
   onboardingDone: boolean;
+  termsAcceptedVersion: string | null; // SPRINT-32: server-side terms version audit
   createdAt: Date;
   /** From `UserLocation.city` when set during onboarding / profile. */
   city: string | null;
@@ -59,6 +62,7 @@ export type AuthSessionPayload = { user: UserResponse };
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name); // SPRINT-32: Apple auth diagnostics
   private readonly googleClient: OAuth2Client;
 
   constructor(
@@ -111,6 +115,7 @@ export class AuthService {
     phoneNumber: string | null;
     role: string;
     onboardingCompleted: boolean;
+    termsAcceptedVersion?: string | null; // SPRINT-32: terms version on user record
     createdAt: Date;
     location?: {
       city: string;
@@ -134,6 +139,7 @@ export class AuthService {
     phoneNumber: string | null;
     role: string;
     onboardingCompleted: boolean;
+    termsAcceptedVersion?: string | null; // SPRINT-32: terms version on user record
     createdAt: Date;
     location?: {
       city: string;
@@ -152,6 +158,7 @@ export class AuthService {
       phoneNumber: user.phoneNumber,
       role: user.role,
       onboardingDone: user.onboardingCompleted,
+      termsAcceptedVersion: user.termsAcceptedVersion ?? null, // SPRINT-32: expose terms version in auth responses
       createdAt: user.createdAt,
       city: user.location?.city ?? null,
       userLocation: user.location
@@ -552,17 +559,32 @@ export class AuthService {
     dto: AppleAuthDto,
     req: Request,
   ): Promise<AuthSessionPayload | { needsUsername: true; tempToken: string }> {
-    const clientId = this.configService.getOrThrow<string>('APPLE_CLIENT_ID');
+    const clientId = this.configService.get<string>('APPLE_CLIENT_ID'); // SPRINT-32: read Services ID audience
+    if (!clientId) {
+      throw new ServiceUnavailableException(
+        'Apple Sign-In is not configured on this server',
+      ); // SPRINT-32: clear error when APPLE_CLIENT_ID is missing
+    }
+    const applePrivateKey = this.configService.get<string>('APPLE_PRIVATE_KEY'); // SPRINT-32: minimum env check
+    if (!applePrivateKey) {
+      throw new ServiceUnavailableException(
+        'Apple Sign-In is not configured on this server',
+      ); // SPRINT-32: clear error when APPLE_PRIVATE_KEY is missing
+    }
     let payload: { email?: string; sub: string };
     try {
       const decoded = await appleSignin.verifyIdToken(dto.idToken, {
-        audience: clientId,
+        audience: clientId, // SPRINT-32: Services ID must match token aud claim
       });
       payload = decoded;
-    } catch {
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err)); // SPRINT-32: safe error shape for logging
+      this.logger.warn(
+        `[Apple Auth] verifyIdToken failed — audience: ${clientId} — name: ${error.name} — error: ${error.message}`,
+      ); // SPRINT-32: PM2-visible diagnostic without logging the token
       throw new UnauthorizedException({
-        message: 'Invalid Apple authentication token.',
-      });
+        message: 'Invalid Apple authentication token',
+      }); // SPRINT-32: unchanged client-facing error after logging
     }
 
     const sub = payload.sub;

@@ -78,6 +78,12 @@ export class CreateRestaurantDto {
   @IsEnum(PriceRange)
   priceRange: PriceRange;
 
+  @ApiPropertyOptional({ minimum: 0 }) // SPRINT-33: expose avg price per person in create payload
+  @IsOptional() // SPRINT-33: optional field for backward compatibility
+  @IsInt() // SPRINT-33: enforce integer semantics matching Prisma Int
+  @Min(0, { message: 'Average price per person must be a non-negative integer' }) // SPRINT-33: explicit validation message from sprint spec
+  avgPricePerPerson?: number; // SPRINT-33: optional average spend per person
+
   @ApiPropertyOptional({ minimum: 0 })
   @IsOptional()
   @IsInt()

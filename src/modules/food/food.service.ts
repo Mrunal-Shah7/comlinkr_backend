@@ -116,6 +116,7 @@ export class FoodService {
       country: restaurant.country,
       phoneNumber: restaurant.phoneNumber,
       priceRange: restaurant.priceRange,
+      avgPricePerPerson: restaurant.avgPricePerPerson ?? null, // SPRINT-33: include avg spend in all restaurant response shapes
       averageRating: Number(restaurant.averageRating),
       totalReviews: restaurant.totalReviews,
       distanceMiles,
@@ -354,6 +355,7 @@ export class FoodService {
       longitude: dto.longitude,
       phoneNumber: dto.phoneNumber,
       priceRange: dto.priceRange,
+      avgPricePerPerson: dto.avgPricePerPerson ?? null, // SPRINT-33: persist optional avg spend value on create
       waitTimeMinutes: dto.waitTimeMinutes,
       openingTime: dto.openingTime,
       closingTime: dto.closingTime,
@@ -414,6 +416,7 @@ export class FoodService {
       'longitude',
       'phoneNumber',
       'priceRange',
+      'avgPricePerPerson', // SPRINT-33: allow PATCH to update average spend value
       'waitTimeMinutes',
       'openingTime',
       'closingTime',

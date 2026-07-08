@@ -171,7 +171,10 @@ export class OnboardingService {
   async acceptAgreement(userId: string, _dto: AcceptAgreementDto) {
     await this.prisma.user.update({
       where: { id: userId },
-      data: { agreementAcceptedAt: new Date() },
+      data: {
+        agreementAcceptedAt: new Date(),
+        termsAcceptedVersion: process.env.TERMS_VERSION ?? '1.0', // SPRINT-32: record terms version at acceptance
+      },
     });
     return { message: 'Agreement accepted' };
   }

@@ -7,6 +7,7 @@ import {
 import { randomUUID } from 'crypto';
 import { ModuleRef } from '@nestjs/core';
 import { NotificationsService } from '../notifications/notifications.service';
+import { ExpoNotificationService } from '../notifications/expo-notification.service'; // SPRINT-36: restore actual offline push delivery alongside in-app notifications
 import {
   ConversationContextType,
   ConversationMemberStatus,
@@ -26,6 +27,13 @@ const IMAGE_MIME_TYPES = ['image/jpeg', 'image/png', 'image/gif'];
 const IMAGE_MAX_SIZE_BYTES = 5 * 1024 * 1024; // 5MB
 const DELETED_LISTING_LABEL = 'Listing no longer available';
 
+function formatVoiceMessagePreview(durationSeconds: number): string {
+  // SPRINT-36: keep conversation and notification audio summaries identical
+  const minutes = Math.floor(durationSeconds / 60); // SPRINT-36: derive whole minutes from stored seconds
+  const seconds = durationSeconds % 60; // SPRINT-36: derive the remaining seconds
+  return `Voice message (${minutes}:${seconds.toString().padStart(2, '0')})`; // SPRINT-36: use the exact documented preview format
+} // SPRINT-36: complete voice-message preview helper
+
 export interface ConversationMemberResponse {
   id: string;
   userId: string;
@@ -44,6 +52,7 @@ export interface LastMessageResponse {
   senderId: string;
   senderName: string;
   createdAt: Date;
+  durationSeconds: number | null; // SPRINT-36: include audio duration in conversation last-message responses
 }
 
 export interface ConversationResponse {
@@ -82,6 +91,7 @@ export interface MessageResponse {
   createdAt: Date;
   sender: MessageSenderResponse;
   imageUrl: string | null;
+  durationSeconds: number | null; // SPRINT-36: include audio duration in history and real-time payloads
   isOwn: boolean;
 }
 
@@ -92,11 +102,22 @@ export class MessagingService {
     private readonly fileService: StorageService,
     private readonly moduleRef: ModuleRef,
     private readonly notificationsService: NotificationsService,
+    private readonly expoNotificationService: ExpoNotificationService, // SPRINT-36: send message pushes independently of socket presence
   ) {}
 
   private getGateway(): {
     isUserOnline(userId: string): boolean;
     emitNewMessage(conversationId: string, message: MessageResponse): void;
+    emitConversationUpdated( // SPRINT-36: expose the personal-room conversation-list emitter without a static gateway import
+      userId: string, // SPRINT-36: identify the list-update recipient
+      payload: {
+        // SPRINT-36: mirror the gateway payload contract across the circular dependency boundary
+        conversationId: string; // SPRINT-36: identify the changed conversation
+        messagePreview: string; // SPRINT-36: carry the latest preview
+        unreadCount: number; // SPRINT-36: carry recipient-specific unread state
+        updatedAt: string; // SPRINT-36: carry ordering timestamp
+      }, // SPRINT-36: complete the list-update payload
+    ): void; // SPRINT-36: complete personal-room emitter signature
   } | null {
     try {
       // Dynamic require avoids a circular dependency with MessagingGateway.
@@ -316,6 +337,7 @@ export class MessagingService {
         type: string;
         senderId: string;
         createdAt: Date;
+        durationSeconds?: number | null; // SPRINT-36: accept attachment duration from the conversation query
         sender: { fullName: string };
       }>;
     },
@@ -340,11 +362,16 @@ export class MessagingService {
     const lastMessage: LastMessageResponse | null = lastMsg
       ? {
           id: lastMsg.id,
-          content: lastMsg.content,
           type: lastMsg.type,
           senderId: lastMsg.senderId,
           senderName: lastMsg.sender.fullName,
           createdAt: lastMsg.createdAt,
+          durationSeconds: lastMsg.durationSeconds ?? null, // SPRINT-36: expose last-message audio duration
+          // SPRINT-36: replace empty audio text with the fixed voice-note preview
+          content:
+            lastMsg.type === 'AUDIO' // SPRINT-36: apply the preview only to audio messages
+              ? formatVoiceMessagePreview(lastMsg.durationSeconds ?? 0) // SPRINT-36: format stored seconds as m:ss
+              : lastMsg.content, // SPRINT-36: preserve existing text and image content
         }
       : null;
 
@@ -396,6 +423,7 @@ export class MessagingService {
         avatarUrl: string | null;
       };
       imageUrl?: string | null;
+      durationSeconds?: number | null; // SPRINT-36: accept persisted audio duration in the shared formatter
     },
     currentUserId: string,
   ): MessageResponse {
@@ -411,10 +439,29 @@ export class MessagingService {
         name: raw.sender.fullName,
         avatarUrl: raw.sender.avatarUrl ?? null,
       },
-      imageUrl: raw.type === 'IMAGE' ? (raw.imageUrl ?? null) : null,
+      // SPRINT-36: reuse the existing attachment URL field for both image and audio messages
+      imageUrl:
+        raw.type === 'IMAGE' || raw.type === 'AUDIO' // SPRINT-36: expose stored URL for supported attachment message types
+          ? (raw.imageUrl ?? null) // SPRINT-36: preserve the existing field name and null behavior
+          : null, // SPRINT-36: do not expose attachment URLs for plain messages
+      durationSeconds: raw.durationSeconds ?? null, // SPRINT-36: include duration in every formatted message response
       isOwn: raw.sender.id === currentUserId,
     };
   }
+
+  async uploadAudio(
+    // SPRINT-36: separate potentially slow upload from message persistence
+    userId: string, // SPRINT-36: scope storage to the authenticated uploader
+    file: Express.Multer.File | undefined, // SPRINT-36: accept the multipart interceptor result
+  ): Promise<{ url: string; key: string; size: number }> {
+    // SPRINT-36: return the documented upload response
+    if (!file) {
+      // SPRINT-36: reject multipart requests without an audio part
+      throw new BadRequestException('Audio file is required'); // SPRINT-36: name the missing-field reason
+    } // SPRINT-36: complete missing-file validation
+    const stored = await this.fileService.uploadAudio(file, userId); // SPRINT-36: delegate type, content, size, key, and upload validation
+    return { ...stored, size: file.size }; // SPRINT-36: return URL, key, and original byte size
+  } // SPRINT-36: complete audio-only upload service
 
   async getConversations(
     userId: string,
@@ -765,8 +812,43 @@ export class MessagingService {
 
     let type: MessageType = (dto.type as MessageType) ?? 'TEXT';
     let imageUrl: string | null = null;
+    let durationSeconds: number | null = null; // SPRINT-36: default non-audio messages to no duration
     const content =
       dto.content != null ? sanitizeInput(String(dto.content)) : '';
+
+    if (type === 'AUDIO') {
+      // SPRINT-36: enforce AUDIO cross-field requirements explicitly
+      if (!dto.audioUrl?.trim()) {
+        // SPRINT-36: require an uploaded attachment URL
+        throw new BadRequestException(
+          'audioUrl is required for AUDIO messages',
+        ); // SPRINT-36: name the missing field precisely
+      } // SPRINT-36: complete audio URL requirement
+      if (dto.durationSeconds == null) {
+        // SPRINT-36: require a stored whole-second duration
+        throw new BadRequestException( // SPRINT-36: produce a precise cross-field error
+          'durationSeconds is required for AUDIO messages', // SPRINT-36: name the missing field precisely
+        ); // SPRINT-36: complete missing-duration exception
+      } // SPRINT-36: complete audio duration requirement
+      if (file) {
+        // SPRINT-36: keep audio upload separate from message creation
+        throw new BadRequestException( // SPRINT-36: reject mixed image/audio multipart requests
+          'AUDIO messages must use audioUrl from the audio upload endpoint', // SPRINT-36: explain the correct two-step contract
+        ); // SPRINT-36: complete mixed-upload exception
+      } // SPRINT-36: complete separated-upload enforcement
+      imageUrl = dto.audioUrl.trim(); // SPRINT-36: reuse the existing Message.imageUrl attachment column
+      durationSeconds = dto.durationSeconds; // SPRINT-36: persist client-rounded whole seconds
+    } else if (dto.audioUrl != null || dto.durationSeconds != null) {
+      // SPRINT-36: prevent audio metadata on non-audio messages
+      throw new BadRequestException( // SPRINT-36: produce a precise cross-field error
+        'audioUrl and durationSeconds must be absent for non-AUDIO messages', // SPRINT-36: name the invalid condition
+      ); // SPRINT-36: complete non-audio metadata exception
+    } // SPRINT-36: complete message-type cross-field validation
+
+    if (type === 'TEXT' && content.trim().length === 0) {
+      // SPRINT-36: preserve required text content after making DTO content optional
+      throw new BadRequestException('content is required for TEXT messages'); // SPRINT-36: name the missing text field
+    } // SPRINT-36: complete text-content validation
 
     if (file) {
       if (file.size > IMAGE_MAX_SIZE_BYTES) {
@@ -794,6 +876,7 @@ export class MessagingService {
         content,
         type,
         imageUrl,
+        durationSeconds, // SPRINT-36: persist nullable whole-second audio duration
       },
       include: {
         sender: {
@@ -818,12 +901,32 @@ export class MessagingService {
     }
     const otherAcceptedMembers = await this.prisma.conversationMember.findMany({
       where: { conversationId, userId: { not: userId }, status: 'ACCEPTED' },
-      select: { userId: true },
+      select: { userId: true, lastReadAt: true }, // SPRINT-36: calculate recipient-specific unread counts for list events
     });
     const senderName = (message as any).sender?.fullName ?? 'Someone';
-    const contentPreview =
-      content.length > 100 ? content.slice(0, 100) + '…' : content;
+    const contentPreview = // SPRINT-36: provide a non-empty shared preview for attachment-only audio messages
+      type === 'AUDIO' // SPRINT-36: detect voice notes before using empty text
+        ? formatVoiceMessagePreview(durationSeconds ?? 0) // SPRINT-36: format the exact m:ss voice-note label
+        : content.length > 100 // SPRINT-36: preserve the existing text truncation behavior
+          ? content.slice(0, 100) + '…' // SPRINT-36: bound long notification and list text
+          : content; // SPRINT-36: preserve short message text
     for (const m of otherAcceptedMembers) {
+      const unreadCount = await this.prisma.message.count({
+        // SPRINT-36: provide an authoritative unread count after persistence
+        where: {
+          // SPRINT-36: count only messages unread by this recipient
+          conversationId, // SPRINT-36: constrain the updated conversation
+          senderId: { not: m.userId }, // SPRINT-36: exclude the recipient's own messages
+          createdAt: m.lastReadAt ? { gt: m.lastReadAt } : undefined, // SPRINT-36: respect the recipient's read watermark
+        }, // SPRINT-36: complete unread filter
+      }); // SPRINT-36: complete recipient unread query
+      g?.emitConversationUpdated(m.userId, {
+        // SPRINT-36: update conversation lists through each recipient's personal room
+        conversationId, // SPRINT-36: identify the row to update
+        messagePreview: contentPreview, // SPRINT-36: use the same bounded text as notifications
+        unreadCount, // SPRINT-36: provide the authoritative badge value
+        updatedAt: now.toISOString(), // SPRINT-36: provide the new ordering timestamp
+      }); // SPRINT-36: complete personal-room list emission
       void this.notificationsService.createNotification({
         userId: m.userId,
         type: 'MESSAGE',
@@ -834,6 +937,12 @@ export class MessagingService {
         actorId: userId,
       });
     }
+    void this.expoNotificationService.sendToUsers(
+      // SPRINT-36: preserve offline delivery as real push, independent of socket presence
+      otherAcceptedMembers.map((recipient) => recipient.userId), // SPRINT-36: target every accepted recipient
+      `New message from ${senderName}`, // SPRINT-36: match the in-app notification title
+      contentPreview, // SPRINT-36: match the in-app notification body
+    ); // SPRINT-36: do not delay the message response on external push delivery
     return formatted;
   }
 

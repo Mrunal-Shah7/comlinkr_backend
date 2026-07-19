@@ -17,7 +17,7 @@ import {
   createPaginationMeta,
 } from '../../common/dto/pagination.dto';
 import { sanitizeInput } from '../../common/utils/sanitize';
-import { NeighborhoodMood } from '@prisma/client';
+import { NeighborhoodMood, Prisma } from '@prisma/client'; // SPRINT-37: type the constrained owner update payload
 import { VoteNeighborhoodMoodDto } from './dto/vote-neighborhood-mood.dto';
 
 const FEED_MEDIA_MAX_FILES = 6;
@@ -61,6 +61,8 @@ export class FeedService {
       isPublished: post.isPublished,
       createdAt: post.createdAt,
       updatedAt: post.updatedAt,
+      editedAt: post.editedAt ? new Date(post.editedAt).toISOString() : null, // SPRINT-37: expose the explicit edit time consistently
+      isEdited: post.editedAt != null, // SPRINT-37: spare clients from deriving edit state from nullable timestamps
       author: {
         id: post.author.id,
         username: post.author.username,
@@ -388,6 +390,7 @@ export class FeedService {
   async updateFeedPost(userId: string, postId: string, dto: UpdateFeedPostDto) {
     const existing = await this.prisma.feedPost.findUnique({
       where: { id: postId },
+      select: { id: true, authorId: true, isPublished: true }, // SPRINT-37: load only identity, ownership, and publication state before any write
     });
     if (!existing) {
       throw new NotFoundException({
@@ -402,7 +405,17 @@ export class FeedService {
       });
     }
 
-    const data: any = {};
+    const hasChanges = Object.values(dto).some((value) => value !== undefined); // SPRINT-37: reject empty partial updates instead of hiding client defects
+    if (!hasChanges) {
+      // SPRINT-37: enforce at least one defined editable field
+      throw new BadRequestException({
+        // SPRINT-37: return the established structured API error
+        code: 'BAD_REQUEST', // SPRINT-37: identify invalid input
+        message: 'No changes were supplied', // SPRINT-37: state the empty-update condition precisely
+      }); // SPRINT-37: complete empty-update rejection
+    } // SPRINT-37: complete defined-field gate
+
+    const data: Prisma.FeedPostUpdateInput = { editedAt: new Date() }; // SPRINT-37: mark every successful author edit
     if (dto.title !== undefined) data.title = sanitizeInput(String(dto.title));
     if (dto.content !== undefined)
       data.content = sanitizeInput(String(dto.content));

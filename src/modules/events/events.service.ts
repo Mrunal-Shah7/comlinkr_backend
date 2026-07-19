@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException, // SPRINT-38: Translate duplicate event-review constraints into a client conflict.
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -18,7 +19,13 @@ import { CreateEventDto } from './dto/create-event.dto';
 import { EventsQueryDto } from './dto/events-query.dto';
 import { UpdateEventDto } from './dto/update-event.dto';
 import { AttendEventDto } from './dto/attend-event.dto';
-import { TicketType } from '@prisma/client';
+import { EventRegistrationStatus, TicketType } from '@prisma/client'; // SPRINT-38: Use persisted active/cancelled registration state.
+import { CreateEventReviewDto } from './dto/create-event-review.dto'; // SPRINT-38: Type event review creation.
+import { UpdateEventReviewDto } from './dto/update-event-review.dto'; // SPRINT-38: Type event review edits.
+import {
+  EventCheckInFilter,
+  EventCheckInStatusDto,
+} from './dto/event-checkin-status.dto'; // SPRINT-38: Type organiser status filtering and pagination.
 
 const EVENT_IMAGE_MAX = 6;
 const EVENT_IMAGE_MAX_SIZE = 5 * 1024 * 1024;
@@ -83,6 +90,8 @@ export class EventsService {
       ticketPrice: event.ticketPrice != null ? Number(event.ticketPrice) : null,
       capacity: event.capacity,
       attendeeCount,
+      averageRating: Number(event.averageRating ?? 0), // SPRINT-38: Match restaurant aggregate response naming and numeric shape.
+      totalReviews: event.totalReviews ?? 0, // SPRINT-38: Expose denormalised event review count everywhere this formatter is used.
       createdAt: event.createdAt,
       images,
       author: {
@@ -112,6 +121,13 @@ export class EventsService {
         currentUserId &&
         (event.authorId === currentUserId || !!isAttending)
       ),
+      ...(event.reviews !== undefined // SPRINT-38: Add caller review state only when the detail query requested it.
+        ? {
+            // SPRINT-38: Keep detail state in the existing formatted event response.
+            hasReviewed: event.reviews.length > 0, // SPRINT-38: Let clients choose create versus edit UI without another request.
+            myReviewId: event.reviews[0]?.id ?? null, // SPRINT-38: Return the caller's compound-unique review identifier.
+          } // SPRINT-38: Complete detail-only review state.
+        : {}), // SPRINT-38: Avoid claiming false review state on list queries that did not load it.
     };
   }
 
@@ -165,7 +181,7 @@ export class EventsService {
             },
           },
           attendees: {
-            where: { userId },
+            where: { userId, status: EventRegistrationStatus.ACTIVE }, // SPRINT-38: Exclude cancelled registrations from list attendance state.
             select: { id: true },
           },
           saves: {
@@ -198,7 +214,7 @@ export class EventsService {
           },
         },
         attendees: {
-          where: { userId },
+          where: { userId, status: EventRegistrationStatus.ACTIVE }, // SPRINT-38: Exclude cancelled registrations from detail attendance state.
           select: { id: true },
         },
         saves: {
@@ -206,6 +222,12 @@ export class EventsService {
           select: { id: true },
         },
         eventImages: { orderBy: { order: 'asc' } },
+        reviews: {
+          // SPRINT-38: Resolve the caller's own review in the event detail query.
+          where: { userId }, // SPRINT-38: Scope directly to the acting user.
+          select: { id: true }, // SPRINT-38: Fetch only the identifier required by detail UI.
+          take: 1, // SPRINT-38: Bound the relation despite the database compound unique constraint.
+        }, // SPRINT-38: Complete single scoped review relation query.
       },
     });
     if (!event) {
@@ -216,6 +238,338 @@ export class EventsService {
     }
     return await this.formatEvent(event, userId);
   }
+
+  private async formatEventReview(review: {
+    // SPRINT-38: Reuse the restaurant review response shape.
+    id: string; // SPRINT-38: Review identifier.
+    rating: number; // SPRINT-38: Integer star rating.
+    content: string; // SPRINT-38: Review body.
+    createdAt: Date; // SPRINT-38: Creation timestamp.
+    user: {
+      // SPRINT-38: Public reviewer profile.
+      id: string; // SPRINT-38: Reviewer identifier.
+      username: string; // SPRINT-38: Reviewer handle.
+      fullName: string; // SPRINT-38: Reviewer display name.
+      avatarUrl: string | null; // SPRINT-38: Stored reviewer avatar reference.
+    }; // SPRINT-38: End reviewer shape.
+  }) {
+    // SPRINT-38: Format a loaded event review.
+    return {
+      // SPRINT-38: Match FoodService.formatReviewResponse.
+      id: review.id, // SPRINT-38: Return review identifier.
+      rating: review.rating, // SPRINT-38: Return rating.
+      content: review.content, // SPRINT-38: Return content.
+      createdAt: review.createdAt, // SPRINT-38: Return creation timestamp.
+      author: {
+        // SPRINT-38: Match restaurant author nesting.
+        id: review.user.id, // SPRINT-38: Return reviewer identifier.
+        username: review.user.username, // SPRINT-38: Return reviewer handle.
+        name: review.user.fullName, // SPRINT-38: Match restaurant response's name alias.
+        avatarUrl: review.user.avatarUrl // SPRINT-38: Resolve a readable avatar URL when present.
+          ? await this.buildFileUrl(review.user.avatarUrl) // SPRINT-38: Use the existing storage URL helper.
+          : null, // SPRINT-38: Preserve a null absent avatar.
+      }, // SPRINT-38: End author response.
+    }; // SPRINT-38: End review response.
+  } // SPRINT-38: End event review formatter.
+
+  private eventHasEnded(event: {
+    // SPRINT-38: Interpret existing date/time fields without adding incompatible event fields.
+    date: Date; // SPRINT-38: Existing date-only event value.
+    startTime: string; // SPRINT-38: Required fallback time.
+    endTime: string | null; // SPRINT-38: Preferred event completion time.
+  }): boolean {
+    // SPRINT-38: Return whether review eligibility has begun.
+    const endedAt = new Date(event.date); // SPRINT-38: Start from the persisted event date.
+    const value = (event.endTime ?? event.startTime).trim(); // SPRINT-38: Prefer end time and fall back to start time.
+    const match = value.match(/^(\d{1,2})(?::(\d{2}))?\s*(AM|PM)?$/i); // SPRINT-38: Support the app's documented 12-hour strings and 24-hour values.
+    if (!match) return endedAt.getTime() < Date.now(); // SPRINT-38: Conservatively use the persisted date when legacy time text is unparsable.
+    let hour = Number(match[1]); // SPRINT-38: Parse the supplied hour.
+    const minute = Number(match[2] ?? 0); // SPRINT-38: Default an omitted minute to zero.
+    const meridiem = match[3]?.toUpperCase(); // SPRINT-38: Normalize AM/PM.
+    if (meridiem === 'AM' && hour === 12) hour = 0; // SPRINT-38: Convert midnight to 24-hour time.
+    if (meridiem === 'PM' && hour < 12) hour += 12; // SPRINT-38: Convert afternoon values to 24-hour time.
+    if (hour > 23 || minute > 59) return endedAt.getTime() < Date.now(); // SPRINT-38: Fall back for invalid legacy clock values.
+    endedAt.setHours(hour, minute, 0, 0); // SPRINT-38: Follow the service's existing server-local date semantics.
+    return endedAt.getTime() < Date.now(); // SPRINT-38: Permit reviews only after the interpreted end instant.
+  } // SPRINT-38: End event completion helper.
+
+  private async runEventReviewTransaction<T>( // SPRINT-38: Serialize review mutations so concurrent aggregate recalculations cannot overwrite each other.
+    operation: (tx: Prisma.TransactionClient) => Promise<T>, // SPRINT-38: Accept one atomic review mutation and recalculation.
+  ): Promise<T> {
+    // SPRINT-38: Return the mutation result after any safe retry.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      // SPRINT-38: Retry bounded PostgreSQL serialization conflicts.
+      try {
+        // SPRINT-38: Attempt the mutation at serializable isolation.
+        return await this.prisma.$transaction(operation, {
+          // SPRINT-38: Prevent concurrent review transactions from committing stale aggregates.
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable, // SPRINT-38: Make aggregate rows reflect a serial mutation order.
+        }); // SPRINT-38: Complete the serializable transaction attempt.
+      } catch (error) {
+        // SPRINT-38: Inspect retryable database conflicts.
+        const retryable = // SPRINT-38: Restrict retries to Prisma transaction write conflicts.
+          error instanceof Prisma.PrismaClientKnownRequestError && // SPRINT-38: Narrow to known Prisma errors.
+          error.code === 'P2034'; // SPRINT-38: Match transaction conflict/deadlock failures.
+        if (!retryable || attempt === 2) throw error; // SPRINT-38: Preserve non-retryable errors and bound retries.
+      } // SPRINT-38: End transaction attempt.
+    } // SPRINT-38: End bounded retry loop.
+    throw new Error('Event review transaction retry limit exceeded'); // SPRINT-38: Satisfy total return typing; the loop always returns or throws.
+  } // SPRINT-38: End serial review transaction helper.
+
+  private async recalculateEventReviewAggregates(
+    // SPRINT-38: Recompute aggregates from review rows after every mutation.
+    tx: Prisma.TransactionClient, // SPRINT-38: Keep review and aggregate writes in one transaction.
+    eventId: string, // SPRINT-38: Scope aggregation to one event.
+  ) {
+    // SPRINT-38: Recalculate mean and count using the database.
+    const aggregate = await tx.eventReview.aggregate({
+      // SPRINT-38: Avoid loading reviews into application memory.
+      where: { eventId }, // SPRINT-38: Aggregate only this event's reviews.
+      _avg: { rating: true }, // SPRINT-38: Ask the database for the exact current mean.
+      _count: { _all: true }, // SPRINT-38: Ask the database for the current row count.
+    }); // SPRINT-38: Complete event review aggregation.
+    await tx.event.update({
+      // SPRINT-38: Persist denormalised aggregate fields.
+      where: { id: eventId }, // SPRINT-38: Update the reviewed event.
+      data: {
+        // SPRINT-38: Write both aggregates together.
+        averageRating: aggregate._avg.rating ?? 0, // SPRINT-38: Match restaurant zero behavior when no reviews remain.
+        totalReviews: aggregate._count._all, // SPRINT-38: Store the exact database count.
+      }, // SPRINT-38: End aggregate update data.
+    }); // SPRINT-38: Complete aggregate persistence.
+  } // SPRINT-38: End aggregate recalculation.
+
+  async createEventReview(
+    // SPRINT-38: Create one post-event attendee review.
+    userId: string, // SPRINT-38: Acting attendee.
+    eventId: string, // SPRINT-38: Reviewed event.
+    dto: CreateEventReviewDto, // SPRINT-38: Validated rating and content.
+  ) {
+    // SPRINT-38: Enforce event-specific review eligibility.
+    const event = await this.prisma.event.findUnique({
+      // SPRINT-38: Load event and caller registration once.
+      where: { id: eventId }, // SPRINT-38: Resolve the path event.
+      select: {
+        // SPRINT-38: Fetch only eligibility fields.
+        id: true, // SPRINT-38: Confirm event existence.
+        authorId: true, // SPRINT-38: Prevent organiser self-review.
+        date: true, // SPRINT-38: Determine whether the event occurred.
+        startTime: true, // SPRINT-38: Fallback completion time.
+        endTime: true, // SPRINT-38: Preferred completion time.
+        attendees: {
+          // SPRINT-38: Verify active registration.
+          where: { userId, status: EventRegistrationStatus.ACTIVE }, // SPRINT-38: Cancelled registrations are not attendees.
+          select: { id: true }, // SPRINT-38: Existence is sufficient.
+          take: 1, // SPRINT-38: Bound relation data.
+        }, // SPRINT-38: End attendee relation selection.
+      }, // SPRINT-38: End event eligibility selection.
+    }); // SPRINT-38: Complete event lookup.
+    if (!event) {
+      // SPRINT-38: Match restaurant missing-parent behavior.
+      throw new NotFoundException({
+        // SPRINT-38: Return structured not found.
+        code: 'RESOURCE_NOT_FOUND', // SPRINT-38: Match existing API error code.
+        message: 'Event not found', // SPRINT-38: Explain the missing event.
+      }); // SPRINT-38: Complete missing event exception.
+    } // SPRINT-38: End existence check.
+    if (event.attendees.length === 0) {
+      // SPRINT-38: Restrict reviews to active registered attendees.
+      throw new ForbiddenException({
+        // SPRINT-38: Reject non-attendee reviews.
+        code: 'FORBIDDEN', // SPRINT-38: Use existing authorization code.
+        message: 'Only attendees may review an event.', // SPRINT-38: Provide the required actionable message.
+      }); // SPRINT-38: Complete attendee exception.
+    } // SPRINT-38: End attendee eligibility check.
+    if (!this.eventHasEnded(event)) {
+      // SPRINT-38: Prevent pre-event feedback.
+      throw new BadRequestException({
+        // SPRINT-38: Treat timing as an invalid request.
+        code: 'BAD_REQUEST', // SPRINT-38: Match existing validation errors.
+        message: 'An event may only be reviewed after it has taken place.', // SPRINT-38: State the review timing rule.
+      }); // SPRINT-38: Complete timing exception.
+    } // SPRINT-38: End completion check.
+    if (event.authorId === userId) {
+      // SPRINT-38: Block organiser self-dealing.
+      throw new ForbiddenException({
+        // SPRINT-38: Treat self-review as unauthorized.
+        code: 'FORBIDDEN', // SPRINT-38: Return a machine-readable authorization code.
+        message: 'Organisers cannot review their own event.', // SPRINT-38: Explain the restriction.
+      }); // SPRINT-38: Complete organiser exception.
+    } // SPRINT-38: End organiser check.
+    try {
+      // SPRINT-38: Catch the database uniqueness guarantee explicitly.
+      const review = await this.runEventReviewTransaction(async (tx) => {
+        // SPRINT-38: Serialize creation with exact aggregate recalculation.
+        // SPRINT-38: Keep review creation and aggregate recalculation atomic.
+        const created = await tx.eventReview.create({
+          // SPRINT-38: Let the compound unique constraint decide duplicates.
+          data: { eventId, userId, rating: dto.rating, content: dto.content }, // SPRINT-38: Persist restaurant-equivalent fields.
+          include: {
+            // SPRINT-38: Load public reviewer fields for the response.
+            user: {
+              // SPRINT-38: Include review author.
+              select: {
+                id: true,
+                username: true,
+                fullName: true,
+                avatarUrl: true,
+              }, // SPRINT-38: Match restaurant formatter fields.
+            }, // SPRINT-38: End user include.
+          }, // SPRINT-38: End response include.
+        }); // SPRINT-38: Complete review creation.
+        await this.recalculateEventReviewAggregates(tx, eventId); // SPRINT-38: Recompute exact aggregates after creation.
+        return created; // SPRINT-38: Return the created review from the transaction.
+      }); // SPRINT-38: Complete atomic create.
+      return this.formatEventReview(review); // SPRINT-38: Return the reusable restaurant-shaped response.
+    } catch (error) {
+      // SPRINT-38: Inspect database errors without masking unrelated failures.
+      if (
+        // SPRINT-38: Identify only Prisma unique-constraint failures.
+        error instanceof Prisma.PrismaClientKnownRequestError && // SPRINT-38: Narrow to known Prisma request errors.
+        error.code === 'P2002' // SPRINT-38: Match the compound unique violation.
+      ) {
+        // SPRINT-38: Translate duplicate event review.
+        throw new ConflictException({
+          // SPRINT-38: Return HTTP 409 instead of a raw database error.
+          code: 'DUPLICATE_ENTRY', // SPRINT-38: Match restaurant duplicate semantics.
+          message: 'You have already reviewed this event.', // SPRINT-38: Explain the one-review rule.
+        }); // SPRINT-38: Complete duplicate exception.
+      } // SPRINT-38: End unique violation handling.
+      throw error; // SPRINT-38: Preserve all non-duplicate failures.
+    } // SPRINT-38: End review creation error handling.
+  } // SPRINT-38: End create event review.
+
+  async getEventReviews(eventId: string, query: PaginationDto) {
+    // SPRINT-38: List event reviews in the restaurant pagination envelope.
+    const event = await this.prisma.event.findUnique({
+      where: { id: eventId },
+      select: { id: true },
+    }); // SPRINT-38: Verify the parent event exists.
+    if (!event) {
+      // SPRINT-38: Match restaurant list behavior.
+      throw new NotFoundException({
+        code: 'RESOURCE_NOT_FOUND',
+        message: 'Event not found',
+      }); // SPRINT-38: Return structured missing-event error.
+    } // SPRINT-38: End event existence check.
+    const page = query.page ?? 1; // SPRINT-38: Use standard first-page default.
+    const limit = query.limit ?? 20; // SPRINT-38: Use standard review page size.
+    const [items, total] = await this.prisma.$transaction([
+      // SPRINT-38: Read page and count consistently.
+      this.prisma.eventReview.findMany({
+        // SPRINT-38: Load the requested review page.
+        where: { eventId }, // SPRINT-38: Scope reviews to the event.
+        orderBy: { createdAt: 'desc' }, // SPRINT-38: Match restaurant newest-first ordering.
+        skip: (page - 1) * limit, // SPRINT-38: Apply page offset.
+        take: limit, // SPRINT-38: Apply page size.
+        include: {
+          user: {
+            select: {
+              id: true,
+              username: true,
+              fullName: true,
+              avatarUrl: true,
+            },
+          },
+        }, // SPRINT-38: Load public reviewer fields.
+      }), // SPRINT-38: Complete page query.
+      this.prisma.eventReview.count({ where: { eventId } }), // SPRINT-38: Count all reviews for pagination metadata.
+    ]); // SPRINT-38: Complete list transaction.
+    const data = await Promise.all(
+      items.map((review) => this.formatEventReview(review)),
+    ); // SPRINT-38: Resolve all restaurant-shaped review responses.
+    return { data, meta: createPaginationMeta(page, limit, total) }; // SPRINT-38: Match the standard pagination envelope.
+  } // SPRINT-38: End list event reviews.
+
+  async updateEventReview(
+    // SPRINT-38: Edit an event review by identifier.
+    userId: string, // SPRINT-38: Acting user.
+    eventId: string, // SPRINT-38: Parent event path identifier.
+    reviewId: string, // SPRINT-38: Target review identifier.
+    dto: UpdateEventReviewDto, // SPRINT-38: Optional replacement fields.
+  ) {
+    // SPRINT-38: Enforce author-only editing.
+    if (dto.rating === undefined && dto.content === undefined) {
+      // SPRINT-38: Match restaurant empty-update rejection.
+      throw new BadRequestException('Provide at least one field to update'); // SPRINT-38: Reuse the exact restaurant message.
+    } // SPRINT-38: End empty update check.
+    const existing = await this.prisma.eventReview.findFirst({
+      // SPRINT-38: Resolve review within its path event.
+      where: { id: reviewId, eventId }, // SPRINT-38: Prevent cross-event review targeting.
+      select: { id: true, userId: true }, // SPRINT-38: Fetch ownership only.
+    }); // SPRINT-38: Complete review lookup.
+    if (!existing) {
+      // SPRINT-38: Reject missing or mismatched reviews.
+      throw new NotFoundException({
+        code: 'RESOURCE_NOT_FOUND',
+        message: 'Event review not found',
+      }); // SPRINT-38: Return structured not found.
+    } // SPRINT-38: End existence check.
+    if (existing.userId !== userId) {
+      // SPRINT-38: Organisers and third parties cannot edit another attendee's words.
+      throw new ForbiddenException({
+        code: 'FORBIDDEN',
+        message: 'You can only edit your own event review.',
+      }); // SPRINT-38: Explain author-only editing.
+    } // SPRINT-38: End edit authorization.
+    const updated = await this.runEventReviewTransaction(async (tx) => {
+      // SPRINT-38: Serialize edits with exact aggregate recalculation.
+      // SPRINT-38: Keep edit and aggregate recomputation atomic.
+      const review = await tx.eventReview.update({
+        // SPRINT-38: Apply supplied review fields.
+        where: { id: reviewId }, // SPRINT-38: Update the authorized review.
+        data: {
+          // SPRINT-38: Preserve omitted fields.
+          ...(dto.rating !== undefined ? { rating: dto.rating } : {}), // SPRINT-38: Replace rating only when provided.
+          ...(dto.content !== undefined ? { content: dto.content } : {}), // SPRINT-38: Replace content only when provided.
+        }, // SPRINT-38: End review update data.
+        include: {
+          user: {
+            select: {
+              id: true,
+              username: true,
+              fullName: true,
+              avatarUrl: true,
+            },
+          },
+        }, // SPRINT-38: Load response author.
+      }); // SPRINT-38: Complete review update.
+      await this.recalculateEventReviewAggregates(tx, eventId); // SPRINT-38: Recompute aggregates after every edit.
+      return review; // SPRINT-38: Return updated review.
+    }); // SPRINT-38: Complete atomic review edit.
+    return this.formatEventReview(updated); // SPRINT-38: Return restaurant-shaped updated review.
+  } // SPRINT-38: End update event review.
+
+  async deleteEventReview(userId: string, eventId: string, reviewId: string) {
+    // SPRINT-38: Delete by review identifier.
+    const existing = await this.prisma.eventReview.findFirst({
+      // SPRINT-38: Load review and organiser ownership.
+      where: { id: reviewId, eventId }, // SPRINT-38: Scope the review to the path event.
+      select: { id: true, userId: true, event: { select: { authorId: true } } }, // SPRINT-38: Fetch author and organiser IDs.
+    }); // SPRINT-38: Complete delete target lookup.
+    if (!existing) {
+      // SPRINT-38: Reject missing or cross-event targets.
+      throw new NotFoundException({
+        code: 'RESOURCE_NOT_FOUND',
+        message: 'Event review not found',
+      }); // SPRINT-38: Return structured not found.
+    } // SPRINT-38: End existence check.
+    if (existing.userId !== userId && existing.event.authorId !== userId) {
+      // SPRINT-38: Permit only author or owning organiser.
+      throw new ForbiddenException({
+        code: 'FORBIDDEN',
+        message:
+          'Only the review author or event organiser may delete this review.',
+      }); // SPRINT-38: Explain delete authorization.
+    } // SPRINT-38: End delete authorization.
+    await this.runEventReviewTransaction(async (tx) => {
+      // SPRINT-38: Serialize deletion with exact aggregate recalculation.
+      // SPRINT-38: Keep deletion and aggregates atomic.
+      await tx.eventReview.delete({ where: { id: reviewId } }); // SPRINT-38: Remove the authorized review.
+      await this.recalculateEventReviewAggregates(tx, eventId); // SPRINT-38: Recompute aggregates including the zero-review case.
+    }); // SPRINT-38: Complete atomic review deletion.
+    return { deleted: true }; // SPRINT-38: Match restaurant delete response.
+  } // SPRINT-38: End delete event review.
 
   async createEvent(userId: string, dto: CreateEventDto) {
     if (dto.ticketType === TicketType.PAID) {
@@ -270,7 +624,7 @@ export class EventsService {
           },
         },
         attendees: {
-          where: { userId },
+          where: { userId, status: EventRegistrationStatus.ACTIVE }, // SPRINT-38: Exclude cancelled registrations from created-event state.
           select: { id: true },
         },
         saves: {
@@ -389,7 +743,10 @@ export class EventsService {
     const event = await this.prisma.event.findUnique({
       where: { id: eventId },
       include: {
-        attendees: { where: { userId }, select: { id: true } },
+        attendees: {
+          where: { userId, status: EventRegistrationStatus.ACTIVE },
+          select: { id: true },
+        }, // SPRINT-38: Treat only active registrations as attendance.
         saves: { where: { userId }, select: { id: true } },
       },
     });
@@ -450,7 +807,8 @@ export class EventsService {
         const existingAttendee = await tx.eventAttendee.findUnique({
           where: { eventId_userId: { eventId, userId } },
         });
-        if (existingAttendee) {
+        if (existingAttendee?.status === EventRegistrationStatus.ACTIVE) {
+          // SPRINT-38: Preserve idempotency only for an active registration.
           const e2 = await tx.event.findUnique({
             where: { id: eventId },
             select: { attendeeCount: true, conversationId: true },
@@ -475,16 +833,39 @@ export class EventsService {
 
         const preCount = fresh.attendeeCount;
 
-        await tx.eventAttendee.create({
-          data: {
-            eventId,
-            userId,
-            attendeeName: dto.attendeeName?.trim() || null,
-            attendeeEmail: dto.attendeeEmail?.trim() || null,
-            attendeePhone: dto.attendeePhone?.trim() || null,
-            ticketCount: tickets,
-          },
-        });
+        if (existingAttendee) {
+          // SPRINT-38: Reactivate the retained cancelled registration and its stable Sprint 28 ticket UUID.
+          await tx.eventAttendee.update({
+            // SPRINT-38: Restore admission without issuing a second identifier.
+            where: { id: existingAttendee.id }, // SPRINT-38: Reuse the same registration row.
+            data: {
+              // SPRINT-38: Refresh registration details for the new RSVP.
+              status: EventRegistrationStatus.ACTIVE, // SPRINT-38: Grant admission again.
+              cancelledAt: null, // SPRINT-38: Clear prior cancellation state.
+              checkedInAt: null, // SPRINT-38: Start the reactivated registration unredeemed.
+              checkedInById: null, // SPRINT-38: Clear any prior checker.
+              joinedAt: new Date(), // SPRINT-38: Reflect the latest registration time.
+              attendeeName: dto.attendeeName?.trim() || null, // SPRINT-38: Refresh RSVP name.
+              attendeeEmail: dto.attendeeEmail?.trim() || null, // SPRINT-38: Refresh RSVP email.
+              attendeePhone: dto.attendeePhone?.trim() || null, // SPRINT-38: Refresh RSVP phone.
+              ticketCount: tickets, // SPRINT-38: Refresh ticket quantity.
+            }, // SPRINT-38: End reactivation data.
+          }); // SPRINT-38: Complete registration reactivation.
+        } else {
+          // SPRINT-38: Create the first registration using the existing UUID default.
+          await tx.eventAttendee.create({
+            // SPRINT-38: Persist a new stable ticket identity.
+            data: {
+              // SPRINT-38: Store RSVP details.
+              eventId, // SPRINT-38: Link registration to the event.
+              userId, // SPRINT-38: Link registration to the attendee.
+              attendeeName: dto.attendeeName?.trim() || null, // SPRINT-38: Store optional RSVP name.
+              attendeeEmail: dto.attendeeEmail?.trim() || null, // SPRINT-38: Store optional RSVP email.
+              attendeePhone: dto.attendeePhone?.trim() || null, // SPRINT-38: Store optional RSVP phone.
+              ticketCount: tickets, // SPRINT-38: Store admitted ticket quantity.
+            }, // SPRINT-38: End new registration data.
+          }); // SPRINT-38: Complete first registration.
+        } // SPRINT-38: End create/reactivate branch.
         await tx.event.update({
           where: { id: eventId },
           data: { attendeeCount: { increment: tickets } },
@@ -618,9 +999,10 @@ export class EventsService {
       where: {
         eventId_userId: { eventId, userId },
       },
-      select: { id: true, ticketCount: true },
+      select: { id: true, ticketCount: true, status: true }, // SPRINT-38: Keep cancelled rows idempotent without decrementing twice.
     });
-    if (!attendee) {
+    if (!attendee || attendee.status === EventRegistrationStatus.CANCELLED) {
+      // SPRINT-38: Treat missing and already-cancelled registrations as not attending.
       return {
         attending: false,
         attendeeCount: event.attendeeCount,
@@ -672,9 +1054,15 @@ export class EventsService {
         }
       }
 
-      await tx.eventAttendee.delete({
-        where: { id: attendee.id },
-      });
+      await tx.eventAttendee.update({
+        // SPRINT-38: Retain the stable ticket UUID for a distinct cancelled scan result.
+        where: { id: attendee.id }, // SPRINT-38: Update the active registration.
+        data: {
+          // SPRINT-38: Revoke admission while preserving its audit identity.
+          status: EventRegistrationStatus.CANCELLED, // SPRINT-38: Mark ticket cancelled.
+          cancelledAt: new Date(), // SPRINT-38: Record cancellation time.
+        }, // SPRINT-38: End cancellation state.
+      }); // SPRINT-38: Complete soft cancellation.
       const next = Math.max(0, ev.attendeeCount - ticketCount);
       await tx.event.update({
         where: { id: eventId },
@@ -748,7 +1136,10 @@ export class EventsService {
       take: 24,
       include: {
         author: { select: { id: true } },
-        attendees: { where: { userId }, select: { id: true } },
+        attendees: {
+          where: { userId, status: EventRegistrationStatus.ACTIVE },
+          select: { id: true },
+        }, // SPRINT-38: Exclude cancelled registrations from story RSVP state.
         saves: { where: { userId }, select: { id: true } },
         eventImages: { orderBy: { order: 'asc' } },
       },
@@ -765,6 +1156,8 @@ export class EventsService {
           ? await this.buildFileUrl(e.eventImages[0].imageUrl)
           : (undefined as string | undefined),
         attendees: e.attendeeCount,
+        averageRating: Number(e.averageRating ?? 0), // SPRINT-38: Expose ratings in the lightweight feed event response.
+        totalReviews: e.totalReviews ?? 0, // SPRINT-38: Expose review count in the lightweight feed event response.
         price: e.ticketPrice != null ? Number(e.ticketPrice) : null,
         tags: [] as string[],
         registeredByMe: e.attendees.length > 0,
@@ -786,7 +1179,10 @@ export class EventsService {
             avatarUrl: true,
           },
         },
-        attendees: { where: { userId }, select: { id: true } },
+        attendees: {
+          where: { userId, status: EventRegistrationStatus.ACTIVE },
+          select: { id: true },
+        }, // SPRINT-38: Exclude cancelled registrations from owner event responses.
         saves: { where: { userId }, select: { id: true } },
         eventImages: { orderBy: { order: 'asc' } },
       },
@@ -796,7 +1192,7 @@ export class EventsService {
 
   async getRegisteredEvents(userId: string) {
     const rows = await this.prisma.eventAttendee.findMany({
-      where: { userId },
+      where: { userId, status: EventRegistrationStatus.ACTIVE }, // SPRINT-38: Return only currently registered events.
       orderBy: { joinedAt: 'desc' },
       take: 100,
       include: {
@@ -810,7 +1206,10 @@ export class EventsService {
                 avatarUrl: true,
               },
             },
-            attendees: { where: { userId }, select: { id: true } },
+            attendees: {
+              where: { userId, status: EventRegistrationStatus.ACTIVE },
+              select: { id: true },
+            }, // SPRINT-38: Keep registered event state active-only.
             saves: { where: { userId }, select: { id: true } },
             eventImages: { orderBy: { order: 'asc' } },
           },
@@ -841,7 +1240,10 @@ export class EventsService {
                   userBadges: { select: { badgeType: true } },
                 },
               },
-              attendees: { where: { userId }, select: { id: true } },
+              attendees: {
+                where: { userId, status: EventRegistrationStatus.ACTIVE },
+                select: { id: true },
+              }, // SPRINT-38: Exclude cancelled registrations from saved-event state.
               saves: { where: { userId }, select: { id: true } },
               eventImages: { orderBy: { order: 'asc' } },
             },
@@ -940,7 +1342,10 @@ export class EventsService {
             avatarUrl: true,
           },
         },
-        attendees: { where: { userId }, select: { id: true } },
+        attendees: {
+          where: { userId, status: EventRegistrationStatus.ACTIVE },
+          select: { id: true },
+        }, // SPRINT-38: Exclude cancelled registrations from updated-event state.
         saves: { where: { userId }, select: { id: true } },
         eventImages: { orderBy: { order: 'asc' } },
       },
@@ -989,6 +1394,7 @@ export class EventsService {
       where: { id: eventId },
       include: {
         attendees: {
+          where: { status: EventRegistrationStatus.ACTIVE }, // SPRINT-38: List only currently registered attendees to the host.
           include: {
             user: {
               select: {
@@ -1037,7 +1443,7 @@ export class EventsService {
       where: { id: eventId },
       include: {
         attendees: {
-          where: { userId },
+          where: { userId, status: EventRegistrationStatus.ACTIVE }, // SPRINT-38: Do not issue a usable QR response for a cancelled registration.
           select: { id: true, joinedAt: true, ticketCount: true },
         },
         author: { select: { fullName: true } },
@@ -1084,4 +1490,274 @@ export class EventsService {
       issuedAt: attendee.joinedAt.toISOString(),
     };
   }
+
+  private async formatCheckInAttendee(registration: {
+    // SPRINT-38: Produce the door-safe attendee identity shared by all known-ticket outcomes.
+    id: string; // SPRINT-38: Stable Sprint 28 ticket identifier.
+    ticketCount: number; // SPRINT-38: Number of people represented by the registration.
+    attendeeName: string | null; // SPRINT-38: Optional RSVP display name.
+    attendeeEmail: string | null; // SPRINT-38: Optional RSVP contact email.
+    attendeePhone: string | null; // SPRINT-38: Optional RSVP contact phone.
+    user: {
+      // SPRINT-38: Public account identity.
+      id: string; // SPRINT-38: Account identifier.
+      username: string; // SPRINT-38: Account handle.
+      fullName: string; // SPRINT-38: Account display name.
+      avatarUrl: string | null; // SPRINT-38: Stored avatar reference.
+      email: string; // SPRINT-38: Account email fallback for RSVP display.
+    }; // SPRINT-38: End attendee user shape.
+  }) {
+    // SPRINT-38: Format scanner attendee context.
+    return {
+      // SPRINT-38: Return immediately intelligible identity details.
+      id: registration.user.id, // SPRINT-38: Return attendee account ID.
+      ticketId: registration.id, // SPRINT-38: Return the redeemed registration UUID.
+      name: registration.attendeeName ?? registration.user.fullName, // SPRINT-38: Prefer submitted ticket name.
+      username: registration.user.username, // SPRINT-38: Help the organiser disambiguate names.
+      email: registration.attendeeEmail ?? registration.user.email, // SPRINT-38: Prefer submitted ticket email.
+      phone: registration.attendeePhone, // SPRINT-38: Return RSVP phone when supplied.
+      avatarUrl: registration.user.avatarUrl // SPRINT-38: Resolve attendee avatar for visual confirmation.
+        ? await this.buildFileUrl(registration.user.avatarUrl) // SPRINT-38: Use existing storage URL handling.
+        : null, // SPRINT-38: Preserve null when no avatar exists.
+      ticketCount: registration.ticketCount, // SPRINT-38: Show party size at the door.
+    }; // SPRINT-38: End scanner attendee response.
+  } // SPRINT-38: End scanner attendee formatter.
+
+  async checkInTicket(userId: string, eventId: string, ticketId: string) {
+    // SPRINT-38: Validate and redeem one deployed Sprint 28 ticket.
+    const event = await this.prisma.event.findUnique({
+      // SPRINT-38: Resolve endpoint context before inspecting a ticket.
+      where: { id: eventId }, // SPRINT-38: Load the path event.
+      select: { id: true, title: true, authorId: true }, // SPRINT-38: Fetch existence, notification title, and organiser ownership.
+    }); // SPRINT-38: Complete event lookup.
+    if (!event) {
+      // SPRINT-38: Keep endpoint misuse as an HTTP exception.
+      throw new NotFoundException({
+        code: 'RESOURCE_NOT_FOUND',
+        message: 'Event not found',
+      }); // SPRINT-38: Return structured event not found.
+    } // SPRINT-38: End event existence check.
+    if (event.authorId !== userId) {
+      // SPRINT-38: No co-organiser model exists, so only Event.authorId may scan.
+      throw new ForbiddenException({
+        // SPRINT-38: Keep unauthorized endpoint use as an HTTP exception.
+        code: 'FORBIDDEN', // SPRINT-38: Return standard authorization code.
+        message: 'Only the organiser may check attendees in.', // SPRINT-38: Explain the host-only rule.
+      }); // SPRINT-38: Complete organiser exception.
+    } // SPRINT-38: End organiser authorization.
+    const includeUser = {
+      // SPRINT-38: Reuse the exact attendee profile selection across check-in reads.
+      select: {
+        // SPRINT-38: Limit account data to scanner response fields.
+        id: true, // SPRINT-38: Attendee account ID.
+        username: true, // SPRINT-38: Attendee handle.
+        fullName: true, // SPRINT-38: Attendee display name.
+        avatarUrl: true, // SPRINT-38: Attendee avatar.
+        email: true, // SPRINT-38: Fallback ticket email.
+      }, // SPRINT-38: End attendee account selection.
+    } as const; // SPRINT-38: Preserve Prisma selection literal types.
+    let registration = await this.prisma.eventAttendee.findUnique({
+      // SPRINT-38: Resolve the opaque registration UUID globally.
+      where: { id: ticketId }, // SPRINT-38: Use the existing QR attendeeId directly.
+      include: { user: includeUser }, // SPRINT-38: Load attendee identity when the ticket is known.
+    }); // SPRINT-38: Complete ticket lookup.
+    if (!registration) {
+      // SPRINT-38: Unknown values are ticket outcomes, not transport failures.
+      return {
+        // SPRINT-38: Return an HTTP-success rejection result.
+        admitted: false, // SPRINT-38: Deny admission.
+        reasonCode: 'INVALID_TICKET' as const, // SPRINT-38: Machine-readable unknown-ticket reason.
+        message: 'Ticket not recognised.', // SPRINT-38: Door-friendly rejection message.
+        attendee: null, // SPRINT-38: No identity is known for a random value.
+      }; // SPRINT-38: End invalid ticket result.
+    } // SPRINT-38: End unknown ticket check.
+    const attendee = await this.formatCheckInAttendee(registration); // SPRINT-38: Prepare known attendee context once.
+    if (registration.eventId !== eventId) {
+      // SPRINT-38: Prevent a valid ticket from opening another event.
+      return {
+        // SPRINT-38: Return an HTTP-success wrong-event rejection.
+        admitted: false, // SPRINT-38: Deny admission.
+        reasonCode: 'WRONG_EVENT' as const, // SPRINT-38: Machine-readable event mismatch.
+        message: 'This ticket is for a different event.', // SPRINT-38: Door-friendly mismatch message.
+        attendee, // SPRINT-38: Show known ticket holder for diagnosis.
+      }; // SPRINT-38: End wrong-event result.
+    } // SPRINT-38: End event membership check.
+    if (registration.checkedInAt) {
+      // SPRINT-38: Reject replay before considering cancellation, matching the required order.
+      return {
+        // SPRINT-38: Return original redemption details.
+        admitted: false, // SPRINT-38: Deny duplicate admission.
+        reasonCode: 'ALREADY_CHECKED_IN' as const, // SPRINT-38: Machine-readable replay result.
+        message: 'Ticket was already checked in.', // SPRINT-38: Door-friendly replay message.
+        checkedInAt: registration.checkedInAt, // SPRINT-38: Show the first redemption time.
+        attendee, // SPRINT-38: Show who used the ticket.
+      }; // SPRINT-38: End replay result.
+    } // SPRINT-38: End initial replay check.
+    if (registration.status === EventRegistrationStatus.CANCELLED) {
+      // SPRINT-38: Distinguish retained cancelled registrations from random IDs.
+      return {
+        // SPRINT-38: Return cancellation as an HTTP-success ticket outcome.
+        admitted: false, // SPRINT-38: Deny cancelled admission.
+        reasonCode: 'REGISTRATION_CANCELLED' as const, // SPRINT-38: Machine-readable cancellation reason.
+        message: 'This registration was cancelled.', // SPRINT-38: Door-friendly cancellation message.
+        attendee, // SPRINT-38: Show the known cancelled attendee.
+      }; // SPRINT-38: End cancelled result.
+    } // SPRINT-38: End cancellation check.
+    const now = new Date(); // SPRINT-38: Use one timestamp for atomic redemption and response.
+    const redeemed = await this.prisma.eventAttendee.updateMany({
+      // SPRINT-38: Prevent simultaneous scans from both being admitted.
+      where: {
+        // SPRINT-38: Redeem only an active, unused ticket for this event.
+        id: ticketId, // SPRINT-38: Target the scanned registration.
+        eventId, // SPRINT-38: Reassert event membership in the write.
+        status: EventRegistrationStatus.ACTIVE, // SPRINT-38: Exclude cancellation races.
+        checkedInAt: null, // SPRINT-38: Enforce one-time redemption atomically.
+      }, // SPRINT-38: End atomic redemption predicate.
+      data: { checkedInAt: now, checkedInById: userId }, // SPRINT-38: Record first redemption and checking organiser.
+    }); // SPRINT-38: Complete conditional redemption.
+    if (redeemed.count === 0) {
+      // SPRINT-38: Resolve a concurrent cancellation or scan deterministically.
+      registration = await this.prisma.eventAttendee.findUnique({
+        // SPRINT-38: Reload current ticket state after losing the race.
+        where: { id: ticketId }, // SPRINT-38: Reload the scanned registration.
+        include: { user: includeUser }, // SPRINT-38: Retain attendee context.
+      }); // SPRINT-38: Complete race-state reload.
+      if (registration?.checkedInAt) {
+        // SPRINT-38: A competing scanner redeemed first.
+        return {
+          // SPRINT-38: Report replay with the winning timestamp.
+          admitted: false, // SPRINT-38: Deny the losing concurrent scan.
+          reasonCode: 'ALREADY_CHECKED_IN' as const, // SPRINT-38: Use the normal replay code.
+          message: 'Ticket was already checked in.', // SPRINT-38: Keep scanner messaging consistent.
+          checkedInAt: registration.checkedInAt, // SPRINT-38: Return the actual first redemption time.
+          attendee: await this.formatCheckInAttendee(registration), // SPRINT-38: Return current attendee identity.
+        }; // SPRINT-38: End concurrent replay result.
+      } // SPRINT-38: End concurrent redemption check.
+      return {
+        // SPRINT-38: The remaining write race is cancellation.
+        admitted: false, // SPRINT-38: Deny admission.
+        reasonCode: 'REGISTRATION_CANCELLED' as const, // SPRINT-38: Report concurrent cancellation.
+        message: 'This registration was cancelled.', // SPRINT-38: Keep cancellation messaging consistent.
+        attendee: registration
+          ? await this.formatCheckInAttendee(registration)
+          : attendee, // SPRINT-38: Return the best known identity.
+      }; // SPRINT-38: End race cancellation result.
+    } // SPRINT-38: End conditional redemption race handling.
+    this.notificationsService
+      .createNotification({
+        // SPRINT-38: Optionally confirm successful check-in in the attendee's notifications.
+        userId: registration.userId, // SPRINT-38: Notify the admitted attendee.
+        type: 'SYSTEM', // SPRINT-38: Use an always-enabled existing notification type.
+        title: 'Event check-in confirmed', // SPRINT-38: State the successful action.
+        body: `You were checked in to "${event.title}".`, // SPRINT-38: Identify the event.
+        referenceType: 'EVENT', // SPRINT-38: Link notification context to the event.
+        referenceId: eventId, // SPRINT-38: Provide event deep-link reference.
+        actorId: userId, // SPRINT-38: Record the checking organiser.
+      })
+      .catch(() => {}); // SPRINT-38: Never turn successful door admission into an error because notification creation failed.
+    return {
+      // SPRINT-38: Return successful admission.
+      admitted: true, // SPRINT-38: Explicitly permit entry.
+      reasonCode: 'ADMITTED' as const, // SPRINT-38: Machine-readable success result.
+      message: 'Ticket accepted. Attendee checked in.', // SPRINT-38: Door-friendly success message.
+      checkedInAt: now, // SPRINT-38: Return first redemption time.
+      attendee, // SPRINT-38: Show the admitted attendee.
+    }; // SPRINT-38: End successful check-in result.
+  } // SPRINT-38: End ticket check-in.
+
+  async getEventCheckInStatus(
+    // SPRINT-38: Return organiser check-in totals and a filterable registration page.
+    userId: string, // SPRINT-38: Acting organiser.
+    eventId: string, // SPRINT-38: Event dashboard context.
+    query: EventCheckInStatusDto, // SPRINT-38: Standard pagination plus optional state filter.
+  ) {
+    // SPRINT-38: Build the check-in dashboard response.
+    const event = await this.prisma.event.findUnique({
+      // SPRINT-38: Resolve event ownership.
+      where: { id: eventId }, // SPRINT-38: Load the requested event.
+      select: { id: true, authorId: true }, // SPRINT-38: Fetch only authorization fields.
+    }); // SPRINT-38: Complete event lookup.
+    if (!event) {
+      // SPRINT-38: Keep missing endpoint context as an exception.
+      throw new NotFoundException({
+        code: 'RESOURCE_NOT_FOUND',
+        message: 'Event not found',
+      }); // SPRINT-38: Return structured not found.
+    } // SPRINT-38: End event existence check.
+    if (event.authorId !== userId) {
+      // SPRINT-38: Apply the same organiser-only rule as mutation.
+      throw new ForbiddenException({
+        code: 'FORBIDDEN',
+        message: 'Only the organiser may view check-in status.',
+      }); // SPRINT-38: Explain dashboard authorization.
+    } // SPRINT-38: End organiser authorization.
+    const page = query.page ?? 1; // SPRINT-38: Use standard first-page default.
+    const limit = query.limit ?? 20; // SPRINT-38: Use standard page size and maximum validation.
+    const activeWhere: Prisma.EventAttendeeWhereInput = {
+      // SPRINT-38: Exclude cancelled registrations from registered totals.
+      eventId, // SPRINT-38: Scope dashboard to one event.
+      status: EventRegistrationStatus.ACTIVE, // SPRINT-38: Count only current registrations.
+    }; // SPRINT-38: End active registration predicate.
+    const listWhere: Prisma.EventAttendeeWhereInput = {
+      // SPRINT-38: Add the optional check-in filter.
+      ...activeWhere, // SPRINT-38: Preserve event and active registration scope.
+      ...(query.filter === EventCheckInFilter.CHECKED_IN // SPRINT-38: Select already admitted registrations when requested.
+        ? { checkedInAt: { not: null } } // SPRINT-38: Require a redemption timestamp.
+        : query.filter === EventCheckInFilter.REMAINING // SPRINT-38: Select registrations awaiting admission when requested.
+          ? { checkedInAt: null } // SPRINT-38: Require no redemption timestamp.
+          : {}), // SPRINT-38: Include all active registrations by default.
+    }; // SPRINT-38: End filtered list predicate.
+    const [totalAggregate, checkedInAggregate, filteredTotal, registrations] = // SPRINT-38: Count admitted people by ticket quantity while paginating registration rows.
+      await this.prisma.$transaction([
+        // SPRINT-38: Read dashboard totals and page consistently.
+        this.prisma.eventAttendee.aggregate({
+          // SPRINT-38: Sum active ticket quantities for total registered people.
+          where: activeWhere, // SPRINT-38: Scope the total to active registrations.
+          _sum: { ticketCount: true }, // SPRINT-38: Honor multi-ticket registrations.
+        }), // SPRINT-38: Complete registered ticket aggregation.
+        this.prisma.eventAttendee.aggregate({
+          // SPRINT-38: Sum ticket quantities already admitted.
+          where: { ...activeWhere, checkedInAt: { not: null } },
+          _sum: { ticketCount: true }, // SPRINT-38: Count the checked-in party sizes.
+        }), // SPRINT-38: Complete admitted ticket aggregation.
+        this.prisma.eventAttendee.count({ where: listWhere }), // SPRINT-38: Count rows matching the list filter.
+        this.prisma.eventAttendee.findMany({
+          // SPRINT-38: Load the requested status page.
+          where: listWhere, // SPRINT-38: Apply active/event/filter scope.
+          orderBy: { joinedAt: 'desc' }, // SPRINT-38: Show newest registrations first.
+          skip: (page - 1) * limit, // SPRINT-38: Apply page offset.
+          take: limit, // SPRINT-38: Apply page size.
+          include: {
+            user: {
+              select: {
+                id: true,
+                username: true,
+                fullName: true,
+                avatarUrl: true,
+                email: true,
+              },
+            },
+          }, // SPRINT-38: Load scanner attendee identity.
+        }), // SPRINT-38: Complete status page query.
+      ]); // SPRINT-38: Complete dashboard transaction.
+    const totalRegistered = totalAggregate._sum.ticketCount ?? 0; // SPRINT-38: Normalize an empty event to zero registered people.
+    const checkedIn = checkedInAggregate._sum.ticketCount ?? 0; // SPRINT-38: Normalize no admissions to zero people.
+    const data = await Promise.all(
+      registrations.map(async (registration) => ({
+        // SPRINT-38: Format each active registration.
+        ...(await this.formatCheckInAttendee(registration)), // SPRINT-38: Reuse scanner identity shape.
+        registeredAt: registration.joinedAt, // SPRINT-38: Include registration time.
+        checkedInAt: registration.checkedInAt, // SPRINT-38: Include nullable admission time.
+        checkedIn: registration.checkedInAt !== null, // SPRINT-38: Provide convenient boolean state.
+      })),
+    ); // SPRINT-38: Complete status list formatting.
+    return {
+      // SPRINT-38: Return totals and standard pagination.
+      totalRegistered, // SPRINT-38: Number of people represented by active ticket quantities.
+      checkedIn, // SPRINT-38: Number of people represented by redeemed ticket quantities.
+      remaining: totalRegistered - checkedIn, // SPRINT-38: Number of registered people awaiting admission.
+      data, // SPRINT-38: Filtered registration page.
+      meta: createPaginationMeta(page, limit, filteredTotal), // SPRINT-38: Match standard pagination envelope.
+    }; // SPRINT-38: End check-in status response.
+  } // SPRINT-38: End organiser check-in status.
 }

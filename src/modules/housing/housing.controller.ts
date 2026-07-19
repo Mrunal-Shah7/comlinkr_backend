@@ -13,6 +13,7 @@ import {
 } from '@nestjs/common';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import {
+  ApiBody, // SPRINT-37: document complete image reorder request bodies
   ApiConsumes,
   ApiOperation,
   ApiQuery,
@@ -20,12 +21,13 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
-import { HousingService } from './housing.service';
+import { HousingService, LISTING_IMAGE_MAX } from './housing.service'; // SPRINT-37: use one shared listing image maximum
 import { CreateListingDto } from './dto/create-listing.dto';
 import { CreateListingReportDto } from './dto/create-listing-report.dto';
 import { UpdateListingDto } from './dto/update-listing.dto';
 import { HousingQueryDto } from './dto/housing-query.dto';
 import { PaginationDto } from '../../common/dto/pagination.dto';
+import { ReorderListingImagesDto } from './dto/reorder-listing-images.dto'; // SPRINT-37: validate complete desired image order
 
 const LISTING_IMAGE_MAX_SIZE = 5 * 1024 * 1024;
 
@@ -126,9 +128,19 @@ export class HousingController {
   }
 
   @Patch(':id')
-  @ApiOperation({ summary: 'Update own listing' })
-  @ApiResponse({ status: 200, description: 'Listing updated' })
-  @ApiResponse({ status: 403, description: 'Not owner' })
+  @ApiOperation({ summary: 'Partially update an owned housing listing' }) // SPRINT-37: describe owner-scoped partial field editing
+  @ApiResponse({
+    status: 200,
+    description: 'Updated listing in the standard response shape',
+  }) // SPRINT-37: document successful edit response
+  @ApiResponse({
+    status: 400,
+    description: 'No changes supplied or validation failed',
+  }) // SPRINT-37: document empty/invalid partial updates
+  @ApiResponse({
+    status: 403,
+    description: 'Only the owner may edit this listing',
+  }) // SPRINT-37: document ownership enforcement
   @ApiResponse({ status: 404, description: 'Listing not found' })
   async updateListing(
     @CurrentUser('id') userId: string,
@@ -137,6 +149,108 @@ export class HousingController {
   ) {
     return this.housingService.updateListing(userId, id, dto);
   }
+
+  @Post(':id/images') // SPRINT-37: keep owner image operations grouped immediately after field editing
+  @UseInterceptors(
+    // SPRINT-37: reuse the existing direct multipart image mechanism
+    FilesInterceptor('images', LISTING_IMAGE_MAX, {
+      // SPRINT-37: share the same six-image limit as service capacity validation
+      limits: { fileSize: LISTING_IMAGE_MAX_SIZE }, // SPRINT-37: preserve the existing five MiB per-file ceiling
+    }), // SPRINT-37: complete multipart interceptor configuration
+  ) // SPRINT-37: complete image upload interceptor
+  @ApiOperation({ summary: 'Append images to an owned listing' }) // SPRINT-37: describe owner-scoped image addition
+  @ApiConsumes('multipart/form-data') // SPRINT-37: publish the existing direct-file upload contract
+  @ApiBody({
+    // SPRINT-37: document the established multipart field explicitly
+    schema: {
+      // SPRINT-37: define the direct-file request body
+      type: 'object', // SPRINT-37: represent the multipart form
+      properties: {
+        // SPRINT-37: enumerate accepted form fields
+        images: {
+          // SPRINT-37: retain the mobile client's existing field name
+          type: 'array', // SPRINT-37: accept a batch of images
+          maxItems: LISTING_IMAGE_MAX, // SPRINT-37: publish the shared per-listing maximum
+          items: { type: 'string', format: 'binary' }, // SPRINT-37: represent each uploaded image file
+        }, // SPRINT-37: complete image field schema
+      }, // SPRINT-37: complete multipart properties
+      required: ['images'], // SPRINT-37: require at least one multipart image field
+    }, // SPRINT-37: complete multipart body schema
+  }) // SPRINT-37: complete upload Swagger body
+  @ApiResponse({
+    status: 201,
+    description: 'Complete ordered listing image collection',
+  }) // SPRINT-37: document ordered response
+  @ApiResponse({
+    status: 400,
+    description: 'No files, invalid files, or six-image limit exceeded',
+  }) // SPRINT-37: document upload validation
+  @ApiResponse({ status: 403, description: 'Only the owner may add images' }) // SPRINT-37: document ownership enforcement
+  @ApiResponse({ status: 404, description: 'Listing not found' }) // SPRINT-37: document missing listing behavior
+  async uploadImages(
+    // SPRINT-37: retain the existing mobile-compatible upload route
+    @CurrentUser('id') userId: string, // SPRINT-37: derive actor identity from the authenticated session
+    @Param('id') id: string, // SPRINT-37: identify the owner-verified listing
+    @UploadedFiles() files: Express.Multer.File[], // SPRINT-37: receive direct multipart image files
+  ) {
+    // SPRINT-37: complete upload route signature
+    const list = files ?? []; // SPRINT-37: normalize absent multipart files
+    if (list.length === 0) {
+      // SPRINT-37: reject an empty upload before service invocation
+      throw new BadRequestException({
+        // SPRINT-37: return the established structured error
+        code: 'BAD_REQUEST', // SPRINT-37: identify invalid input
+        message: 'No files uploaded', // SPRINT-37: state the missing-file condition
+      }); // SPRINT-37: complete empty-upload error
+    } // SPRINT-37: complete controller file gate
+    return this.housingService.uploadListingImages(userId, id, list); // SPRINT-37: append through owner-checked service logic
+  } // SPRINT-37: complete add-images route
+
+  @Delete(':id/images/:imageId') // SPRINT-37: expose owner-scoped removal under the nested image path
+  @ApiOperation({ summary: 'Remove one image from an owned listing' }) // SPRINT-37: describe image removal
+  @ApiResponse({
+    status: 200,
+    description: 'Remaining images in contiguous stored order',
+  }) // SPRINT-37: document ordered remainder
+  @ApiResponse({ status: 403, description: 'Only the owner may remove images' }) // SPRINT-37: document ownership enforcement
+  @ApiResponse({ status: 404, description: 'Listing or image not found' }) // SPRINT-37: document cross-listing/missing image behavior
+  async removeImage(
+    // SPRINT-37: retain the established nested removal route
+    @CurrentUser('id') userId: string, // SPRINT-37: derive actor identity from the authenticated session
+    @Param('id') id: string, // SPRINT-37: identify the owner-verified listing
+    @Param('imageId') imageId: string, // SPRINT-37: identify the image whose listing membership is verified
+  ) {
+    // SPRINT-37: complete remove route signature
+    return this.housingService.removeListingImage(userId, id, imageId); // SPRINT-37: delete, clean storage, renumber, and return remainder
+  } // SPRINT-37: complete remove-image route
+
+  @Patch(':id/images/reorder') // SPRINT-37: accept a complete idempotent desired ordering
+  @ApiOperation({
+    summary: 'Set the complete image order for an owned listing',
+  }) // SPRINT-37: describe full-list reorder semantics
+  @ApiBody({ type: ReorderListingImagesDto }) // SPRINT-37: publish the ordered identifier array contract
+  @ApiResponse({
+    status: 200,
+    description: 'Images in their newly persisted order',
+  }) // SPRINT-37: document successful reorder
+  @ApiResponse({
+    status: 400,
+    description: 'Ordering is missing, extra, or duplicated',
+  }) // SPRINT-37: document exact-set validation
+  @ApiResponse({
+    status: 403,
+    description: 'Only the owner may reorder images',
+  }) // SPRINT-37: document ownership enforcement
+  @ApiResponse({ status: 404, description: 'Listing not found' }) // SPRINT-37: document missing listing behavior
+  async reorderImages(
+    // SPRINT-37: expose the new complete-order operation
+    @CurrentUser('id') userId: string, // SPRINT-37: derive actor identity from the authenticated session
+    @Param('id') id: string, // SPRINT-37: identify the owner-verified listing
+    @Body() dto: ReorderListingImagesDto, // SPRINT-37: receive validated complete image identifiers
+  ) {
+    // SPRINT-37: complete reorder route signature
+    return this.housingService.reorderListingImages(userId, id, dto.imageIds); // SPRINT-37: persist atomically after service ownership/set checks
+  } // SPRINT-37: complete reorder-images route
 
   @Delete(':id')
   @ApiOperation({ summary: 'Delete own listing' })
@@ -180,45 +294,5 @@ export class HousingController {
   @ApiResponse({ status: 200, description: 'Save state' })
   async toggleSave(@CurrentUser('id') userId: string, @Param('id') id: string) {
     return this.housingService.toggleSave(userId, id);
-  }
-
-  @Post(':id/images')
-  @UseInterceptors(
-    FilesInterceptor('images', 6, {
-      limits: { fileSize: LISTING_IMAGE_MAX_SIZE },
-    }),
-  )
-  @ApiOperation({ summary: 'Upload listing images' })
-  @ApiConsumes('multipart/form-data')
-  @ApiResponse({ status: 201, description: 'Images uploaded' })
-  @ApiResponse({ status: 400, description: 'No files or limit exceeded' })
-  @ApiResponse({ status: 403, description: 'Not owner' })
-  @ApiResponse({ status: 404, description: 'Listing not found' })
-  async uploadImages(
-    @CurrentUser('id') userId: string,
-    @Param('id') id: string,
-    @UploadedFiles() files: Express.Multer.File[],
-  ) {
-    const list = files ?? [];
-    if (list.length === 0) {
-      throw new BadRequestException({
-        code: 'BAD_REQUEST',
-        message: 'No files uploaded',
-      });
-    }
-    return this.housingService.uploadListingImages(userId, id, list);
-  }
-
-  @Delete(':id/images/:imageId')
-  @ApiOperation({ summary: 'Remove listing image' })
-  @ApiResponse({ status: 200, description: 'Image removed' })
-  @ApiResponse({ status: 403, description: 'Not owner' })
-  @ApiResponse({ status: 404, description: 'Listing or image not found' })
-  async removeImage(
-    @CurrentUser('id') userId: string,
-    @Param('id') id: string,
-    @Param('imageId') imageId: string,
-  ) {
-    return this.housingService.removeListingImage(userId, id, imageId);
   }
 }

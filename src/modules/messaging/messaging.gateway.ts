@@ -20,6 +20,24 @@ const SOCKET_CORS_ORIGINS = (process.env.CORS_ORIGINS || '')
   .map((s) => s.trim())
   .filter(Boolean);
 
+export function conversationRoomName(conversationId: string): string {
+  // SPRINT-36: centralize every conversation-room construction
+  return `conversation:${conversationId}`; // SPRINT-36: namespace conversation rooms to prevent future collisions
+} // SPRINT-36: complete shared conversation-room helper
+
+export function userRoomName(userId: string): string {
+  // SPRINT-36: centralize personal room construction
+  return `user:${userId}`; // SPRINT-36: provide a stable target for conversation-list updates
+} // SPRINT-36: complete shared personal-room helper
+
+export interface ConversationUpdatedPayload {
+  // SPRINT-36: define the user-scoped conversation-list event contract
+  conversationId: string; // SPRINT-36: identify the row that changed
+  messagePreview: string; // SPRINT-36: provide the latest-message summary
+  unreadCount: number; // SPRINT-36: provide the recipient's current unread count
+  updatedAt: string; // SPRINT-36: provide the ordering timestamp
+} // SPRINT-36: complete conversation update payload
+
 @WebSocketGateway({
   namespace: '/chat',
   cors: {
@@ -36,6 +54,7 @@ export class MessagingGateway
   private readonly logger = new Logger(MessagingGateway.name);
   private readonly userSockets = new Map<string, Set<string>>();
   private readonly socketUsers = new Map<string, string>();
+  private readonly typingThrottle = new Map<string, number>(); // SPRINT-36: throttle ephemeral typing-start events per socket and conversation
   private sessionMiddleware!: (
     req: any,
     res: any,
@@ -53,7 +72,7 @@ export class MessagingGateway
     const options = getSessionOptions(redisClient);
     this.sessionMiddleware = session(options);
     server.use((socket: any, next: (err?: Error) => void) => {
-      this.sessionMiddleware(socket.request, {} as any, next);
+      this.sessionMiddleware(socket.request, {} as any, next); // SPRINT-36: restore normal session middleware after diagnostic completion
     });
   }
 
@@ -61,6 +80,10 @@ export class MessagingGateway
     const req = socket.request as { session?: { userId?: string } };
     const userId = req.session?.userId;
     if (!userId) {
+      this.logger.warn(
+        // SPRINT-36: permanently surface handshake authentication failures
+        `[Socket Auth] failed socket=${socket.id} reason=missing-session-user`, // SPRINT-36: record a safe reason without cookie contents
+      ); // SPRINT-36: complete permanent authentication-failure log
       socket.disconnect();
       return;
     }
@@ -73,6 +96,27 @@ export class MessagingGateway
     set.add(socket.id);
     this.socketUsers.set(socket.id, userId);
     socket.userId = userId;
+    socket.once('disconnect', (reason: string) => {
+      // SPRINT-36: retain the transport-provided disconnect reason for permanent diagnostics
+      this.logger.log(
+        // SPRINT-36: permanently expose disconnection reason
+        `[Socket Auth] disconnected userId=${userId} socket=${socket.id} reason=${reason}`, // SPRINT-36: record safe user/socket context
+      ); // SPRINT-36: complete permanent disconnection log
+    }); // SPRINT-36: finish disconnect-reason listener
+    await socket.join(userRoomName(userId)); // SPRINT-36: join the personal room immediately after identity assignment
+    const memberships = await this.prisma.conversationMember.findMany({
+      // SPRINT-36: make room membership automatic on every connection and reconnection
+      where: { userId, status: { not: 'BLOCKED' } }, // SPRINT-36: include accepted and visible pending conversations while excluding blocked rooms
+      select: { conversationId: true }, // SPRINT-36: load only room identifiers
+    }); // SPRINT-36: complete automatic membership lookup
+    await Promise.all(
+      // SPRINT-36: join all conversation rooms before authentication completion is logged
+      memberships.map(
+        (
+          membership, // SPRINT-36: map each membership to one room join
+        ) => socket.join(conversationRoomName(membership.conversationId)), // SPRINT-36: use the shared room helper
+      ), // SPRINT-36: complete automatic room join mapping
+    ); // SPRINT-36: wait until every room is active
 
     if (wasEmpty) {
       const partnerIds =
@@ -84,7 +128,10 @@ export class MessagingGateway
         }
       }
     }
-    this.logger.log(`User ${userId} connected (socket: ${socket.id})`);
+    this.logger.log(
+      // SPRINT-36: permanently confirm resolved identity, transport, and room count
+      `[Socket Auth] authenticated userId=${userId} socket=${socket.id} transport=${socket.conn?.transport?.name ?? 'unknown'} conversationRooms=${memberships.length}`, // SPRINT-36: provide future one-line handshake evidence
+    ); // SPRINT-36: complete permanent authentication-success log
   }
 
   handleDisconnect(socket: any) {
@@ -108,7 +155,11 @@ export class MessagingGateway
       }
     }
     this.socketUsers.delete(socket.id);
-    this.logger.log(`User ${userId} disconnected`);
+    const typingPrefix = `${socket.id}:`; // SPRINT-36: identify this socket's ephemeral typing throttle entries
+    for (const key of this.typingThrottle.keys()) {
+      // SPRINT-36: prevent disconnected socket throttle state from leaking
+      if (key.startsWith(typingPrefix)) this.typingThrottle.delete(key); // SPRINT-36: remove only entries owned by this socket
+    } // SPRINT-36: complete typing throttle cleanup
   }
 
   isUserOnline(userId: string): boolean {
@@ -127,9 +178,20 @@ export class MessagingGateway
 
   emitNewMessage(conversationId: string, message: MessageResponse): void {
     this.server
-      .to(conversationId)
+      .to(conversationRoomName(conversationId)) // SPRINT-36: use the shared conversation-room helper for delivery
       .emit('new_message', { conversationId, message });
   }
+
+  emitConversationUpdated(
+    // SPRINT-36: update a recipient's conversation list independently of open-thread rooms
+    userId: string, // SPRINT-36: identify the recipient's personal room
+    payload: ConversationUpdatedPayload, // SPRINT-36: carry row ordering, preview, and unread state
+  ): void {
+    // SPRINT-36: complete user-scoped emission signature
+    this.server // SPRINT-36: target the namespace broadcaster
+      .to(userRoomName(userId)) // SPRINT-36: use the shared personal-room helper
+      .emit('conversation_updated', payload); // SPRINT-36: emit the documented list-level event
+  } // SPRINT-36: complete conversation-list emission
 
   async joinConversation(
     socketId: string,
@@ -145,7 +207,7 @@ export class MessagingGateway
     }
     const socket = this.getSocketById(socketId);
     if (socket) {
-      void socket.join(conversationId);
+      void socket.join(conversationRoomName(conversationId)); // SPRINT-36: retain explicit joins through the shared room helper
     }
     return { ok: true };
   }
@@ -153,7 +215,7 @@ export class MessagingGateway
   leaveConversation(socketId: string, conversationId: string): void {
     const socket = this.getSocketById(socketId);
     if (socket) {
-      void socket.leave(conversationId);
+      void socket.leave(conversationRoomName(conversationId)); // SPRINT-36: use the same helper at the leave site
     }
   }
 
@@ -228,24 +290,55 @@ export class MessagingGateway
   async onTypingStart(socket: any, payload: { conversationId: string }) {
     const userId = socket.userId;
     if (!userId) return;
+    const conversationId = payload?.conversationId; // SPRINT-36: normalize the untrusted typing target
+    if (!conversationId || typeof conversationId !== 'string') return; // SPRINT-36: ignore malformed ephemeral events silently
+    const member = await this.messagingService.findMemberByConversationAndUser(
+      // SPRINT-36: prevent non-members from broadcasting typing state
+      conversationId, // SPRINT-36: verify the requested conversation
+      userId, // SPRINT-36: verify the authenticated socket user
+    ); // SPRINT-36: complete membership lookup
+    if (!member || member.status === 'BLOCKED') return; // SPRINT-36: silently ignore unauthorized typing attempts
+    const throttleKey = `${socket.id}:${conversationId}`; // SPRINT-36: scope throttling to one socket and conversation
+    const now = Date.now(); // SPRINT-36: compare typing-start processing times
+    const lastProcessedAt = this.typingThrottle.get(throttleKey) ?? 0; // SPRINT-36: read prior ephemeral throttle state
+    if (now - lastProcessedAt < 1000) return; // SPRINT-36: cap typing-start processing to once per second
+    this.typingThrottle.set(throttleKey, now); // SPRINT-36: retain only the latest accepted start time
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: { username: true },
+      select: { username: true, fullName: true }, // SPRINT-36: provide a useful display name to recipients
     });
-    socket.to(payload.conversationId).emit('typing_indicator', {
-      conversationId: payload.conversationId,
+    socket.to(conversationRoomName(conversationId)).emit('typing_indicator', {
+      // SPRINT-36: exclude sender and use the shared room helper
+      conversationId, // SPRINT-36: identify the conversation whose composer changed
       userId,
-      username: user?.username ?? '',
+      displayName: user?.fullName || user?.username || '', // SPRINT-36: provide the typing user's display name
     });
   }
 
   @SubscribeMessage('typing_stop')
-  onTypingStop(socket: any, payload: { conversationId: string }) {
+  async onTypingStop(socket: any, payload: { conversationId: string }) {
+    // SPRINT-36: verify stop events with the same rules as start events
     const userId = socket.userId;
     if (!userId) return;
-    socket.to(payload.conversationId).emit('typing_stop', {
-      conversationId: payload.conversationId,
+    const conversationId = payload?.conversationId; // SPRINT-36: normalize the untrusted typing target
+    if (!conversationId || typeof conversationId !== 'string') return; // SPRINT-36: ignore malformed ephemeral events silently
+    const member = await this.messagingService.findMemberByConversationAndUser(
+      // SPRINT-36: prevent non-members from broadcasting stop state
+      conversationId, // SPRINT-36: verify the requested conversation
+      userId, // SPRINT-36: verify the authenticated socket user
+    ); // SPRINT-36: complete membership lookup
+    if (!member || member.status === 'BLOCKED') return; // SPRINT-36: silently ignore unauthorized stop events
+    this.typingThrottle.delete(`${socket.id}:${conversationId}`); // SPRINT-36: allow a future start immediately after a real stop
+    const user = await this.prisma.user.findUnique({
+      // SPRINT-36: match the typing-start payload display contract
+      where: { id: userId }, // SPRINT-36: load the authenticated typing user
+      select: { username: true, fullName: true }, // SPRINT-36: select only display-name fields
+    }); // SPRINT-36: complete typing-stop display lookup
+    socket.to(conversationRoomName(conversationId)).emit('typing_stopped', {
+      // SPRINT-36: exclude sender and use the shared room helper
+      conversationId, // SPRINT-36: identify the conversation whose composer stopped
       userId,
+      displayName: user?.fullName || user?.username || '', // SPRINT-36: keep start and stop payloads symmetric
     });
   }
 
@@ -260,7 +353,8 @@ export class MessagingGateway
     try {
       await this.messagingService.markAsRead(userId, conversationId);
       const now = new Date().toISOString();
-      socket.to(conversationId).emit('message_read', {
+      socket.to(conversationRoomName(conversationId)).emit('message_read', {
+        // SPRINT-36: use the shared room helper for receipts
         conversationId,
         userId,
         messageId,

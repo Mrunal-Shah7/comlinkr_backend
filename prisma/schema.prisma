@@ -140,6 +140,7 @@ enum MessageType {
   TEXT
   IMAGE
   SYSTEM
+  AUDIO // SPRINT-36: represent a voice-note message without reordering existing enum values
 }
 
 enum EventCategory {
@@ -164,6 +165,11 @@ enum TicketType {
   FREE
   PAID
 }
+
+enum EventRegistrationStatus { // SPRINT-38: Preserve cancelled tickets so scanners can distinguish them from invalid identifiers.
+  ACTIVE // SPRINT-38: The registration currently grants admission.
+  CANCELLED // SPRINT-38: The attendee cancelled and the persisted ticket must be rejected explicitly.
+} // SPRINT-38: End event registration lifecycle states.
 
 enum StoryMediaType {
   REEL
@@ -323,6 +329,8 @@ model User {
   sentMessages            Message[]
   events                   Event[]
   eventAttendances         EventAttendee[]
+  eventReviews             EventReview[] // SPRINT-38: Reciprocal relation for reviews authored by this user.
+  eventCheckIns            EventAttendee[] @relation("EventCheckIns") // SPRINT-38: Registrations this user checked in.
   eventSaves               EventSave[]
   housingSaves             HousingSave[]
   restaurantSaves          RestaurantSave[]
@@ -368,6 +376,7 @@ model AuthProvider {
   userId         String
   provider       AuthProviderType
   providerUserId String?
+  refreshToken   String?           @db.Text // SPRINT-34: retain Apple's refresh token for account-deletion revocation
   passwordHash   String?
   createdAt      DateTime         @default(now())
 
@@ -474,6 +483,7 @@ model FeedPost {
   isPublished   Boolean      @default(true)
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
+  editedAt      DateTime?    // SPRINT-37: track explicit author edits separately from automatic updates
 
   author  User            @relation(fields: [authorId], references: [id], onDelete: Cascade)
   media   FeedPostMedia[]
@@ -940,6 +950,7 @@ model Message {
   content        String
   type           MessageType @default(TEXT)
   imageUrl       String?
+  durationSeconds Int?        // SPRINT-36: store rounded whole-second audio duration beside attachment metadata
   isEdited       Boolean     @default(false)
   createdAt      DateTime    @default(now())
 
@@ -968,12 +979,15 @@ model Event {
   ticketPrice   Decimal?
   capacity      Int?
   attendeeCount Int           @default(0)
+  averageRating Decimal       @default(0) // SPRINT-38: Mirror Restaurant.averageRating for reusable rating responses.
+  totalReviews  Int           @default(0) // SPRINT-38: Mirror Restaurant.totalReviews for denormalised review counts.
   conversationId String?    @unique
   createdAt     DateTime      @default(now())
 
   author         User          @relation(fields: [authorId], references: [id], onDelete: Cascade)
   conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
   attendees      EventAttendee[]
+  reviews        EventReview[] // SPRINT-38: Reviews associated with this event.
   saves          EventSave[]
   eventImages    EventImage[]
 }
@@ -1150,12 +1164,32 @@ model EventAttendee {
   attendeeEmail String?
   attendeePhone String?
   ticketCount     Int     @default(1)
+  status          EventRegistrationStatus @default(ACTIVE) // SPRINT-38: Retain cancellation state without replacing the Sprint 28 ticket UUID.
+  cancelledAt     DateTime? // SPRINT-38: Record when a registration stopped granting admission.
+  checkedInAt     DateTime? // SPRINT-38: Record the first successful ticket redemption.
+  checkedInById   String? // SPRINT-38: Record the organiser who redeemed the ticket.
 
   event Event @relation(fields: [eventId], references: [id], onDelete: Cascade)
   user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  checkedInBy User? @relation("EventCheckIns", fields: [checkedInById], references: [id], onDelete: SetNull) // SPRINT-38: Keep check-in time if the organiser account is removed.
 
   @@unique([eventId, userId])
+  @@index([eventId, status, checkedInAt]) // SPRINT-38: Support organiser status totals and filtered attendee lists.
 }
+
+model EventReview { // SPRINT-38: Mirror RestaurantReview with Event as the parent.
+  id        String   @id @default(uuid()) // SPRINT-38: Match the restaurant review identifier.
+  eventId   String // SPRINT-38: Parent event identifier.
+  userId    String // SPRINT-38: Reviewing attendee identifier.
+  rating    Int // SPRINT-38: Match the restaurant integer rating.
+  content   String // SPRINT-38: Match the restaurant review body field and type.
+  createdAt DateTime @default(now()) // SPRINT-38: Match restaurant review creation tracking.
+
+  event Event @relation(fields: [eventId], references: [id], onDelete: Cascade) // SPRINT-38: Delete reviews with their event.
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade) // SPRINT-38: Delete reviews with their author.
+
+  @@unique([eventId, userId]) // SPRINT-38: Enforce one review per attendee per event under concurrency.
+} // SPRINT-38: End event review model.
 
 model Story {
   id              String         @id @default(uuid())

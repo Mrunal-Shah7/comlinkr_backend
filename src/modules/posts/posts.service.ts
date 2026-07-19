@@ -33,6 +33,7 @@ export class PostsService {
           createdAt: true,
           likesCount: true,
           commentsCount: true,
+          editedAt: true, // SPRINT-43: select edit timestamp so unified NEWS cards can expose edit state
         },
       }),
       this.prisma.event.findMany({
@@ -45,6 +46,8 @@ export class PostsService {
           createdAt: true,
           venue: true,
           attendeeCount: true,
+          averageRating: true, // SPRINT-38: Include event aggregate in the unified posts projection.
+          totalReviews: true, // SPRINT-38: Include event review count in the unified posts projection.
         },
       }),
       this.prisma.story.findMany({
@@ -84,6 +87,8 @@ export class PostsService {
       metadata: {
         likesCount: p.likesCount,
         commentsCount: p.commentsCount,
+        editedAt: p.editedAt ? new Date(p.editedAt).toISOString() : null, // SPRINT-43: match FeedService/SavesService edit timestamp shape
+        isEdited: p.editedAt != null, // SPRINT-43: derive edited boolean exactly as the public feed formatters do
       },
     }));
     const eventItems: UnifiedPost[] = events.map((e) => ({
@@ -97,6 +102,8 @@ export class PostsService {
         date: e.date,
         venue: e.venue,
         attendeeCount: e.attendeeCount,
+        averageRating: Number(e.averageRating), // SPRINT-38: Expose a JSON number matching all other event responses.
+        totalReviews: e.totalReviews, // SPRINT-38: Expose event review count in unified post metadata.
       },
     }));
     const storyItems: UnifiedPost[] = stories.map((s) => ({

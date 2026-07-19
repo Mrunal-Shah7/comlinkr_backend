@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { SupportTicket } from '@prisma/client';
+import { EventRegistrationStatus, SupportTicket } from '@prisma/client'; // SPRINT-38: Keep user event statistics scoped to active registrations after soft cancellation.
 import { randomUUID } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
@@ -48,7 +48,9 @@ export class UsersService {
       this.prisma.roommateSave.count({ where: { userId } }),
       this.prisma.storySave.count({ where: { userId } }),
       this.prisma.communitySave.count({ where: { userId } }),
-      this.prisma.eventAttendee.count({ where: { userId } }),
+      this.prisma.eventAttendee.count({
+        where: { userId, status: EventRegistrationStatus.ACTIVE },
+      }), // SPRINT-38: Preserve pre-sprint behavior by excluding retained cancelled rows.
     ]);
     const savedCount =
       feedSaves +
@@ -105,7 +107,9 @@ export class UsersService {
         where: { userId, status: 'ACCEPTED' },
       }),
       this.prisma.feedPost.count({ where: { authorId: userId } }),
-      this.prisma.eventAttendee.count({ where: { userId } }),
+      this.prisma.eventAttendee.count({
+        where: { userId, status: EventRegistrationStatus.ACTIVE },
+      }), // SPRINT-38: Do not award attendance achievements for cancelled registrations.
     ]);
 
     return [

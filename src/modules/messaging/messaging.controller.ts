@@ -20,6 +20,7 @@ import { CreateConversationDto } from './dto/create-conversation.dto';
 import { SendMessageDto } from './dto/send-message.dto';
 import { UpdateMemberStatusDto } from './dto/update-member-status.dto';
 import { ConversationsQueryDto } from './dto/conversations-query.dto';
+import { AUDIO_MAX_SIZE_BYTES } from '../storage/storage.service'; // SPRINT-36: share the exact audio upload size ceiling with the interceptor
 
 const MESSAGE_LIMIT = 30;
 
@@ -48,6 +49,33 @@ export class MessagingController {
   ) {
     return this.messagingService.createConversation(userId, dto);
   }
+
+  @Post('audio/upload') // SPRINT-36: expose an upload-only endpoint before message creation
+  @UseInterceptors(
+    // SPRINT-36: follow the existing memory-backed multipart interceptor pattern
+    FileInterceptor('file', { limits: { fileSize: AUDIO_MAX_SIZE_BYTES } }), // SPRINT-36: reject oversized audio at the transport boundary
+  ) // SPRINT-36: complete audio multipart interceptor
+  @ApiConsumes('multipart/form-data') // SPRINT-36: publish the audio request content type
+  @ApiBody({
+    // SPRINT-36: document the required multipart file contract
+    schema: {
+      // SPRINT-36: define the upload request shape
+      type: 'object', // SPRINT-36: represent the multipart form
+      properties: {
+        // SPRINT-36: enumerate multipart parts
+        file: { type: 'string', format: 'binary' }, // SPRINT-36: accept one audio binary part
+      }, // SPRINT-36: complete multipart properties
+      required: ['file'], // SPRINT-36: require the audio file part
+    }, // SPRINT-36: complete upload schema
+  }) // SPRINT-36: complete Swagger upload documentation
+  async uploadAudio(
+    // SPRINT-36: authenticate through the global guard and current-user decorator
+    @CurrentUser('id') userId: string, // SPRINT-36: identify the storage-key owner
+    @UploadedFile() file?: Express.Multer.File, // SPRINT-36: receive the in-memory audio file
+  ) {
+    // SPRINT-36: complete upload endpoint signature
+    return this.messagingService.uploadAudio(userId, file); // SPRINT-36: return URL, key, and byte size without creating a message
+  } // SPRINT-36: complete audio upload endpoint
 
   // SPRINT-27: soft-hide — DELETE /:id (distinct from GET /:id/messages, PATCH /:id/read by method + suffix)
   @Delete(':id')
@@ -117,10 +145,12 @@ export class MessagingController {
       type: 'object',
       properties: {
         content: { type: 'string' },
-        type: { type: 'string', enum: ['TEXT', 'IMAGE'] },
+        type: { type: 'string', enum: ['TEXT', 'IMAGE', 'AUDIO'] }, // SPRINT-36: publish the audio message type
+        audioUrl: { type: 'string' }, // SPRINT-36: publish the prior upload URL field
+        durationSeconds: { type: 'integer', minimum: 1, maximum: 600 }, // SPRINT-36: publish whole-second duration bounds
         file: { type: 'string', format: 'binary' },
       },
-      required: ['content'],
+      required: [], // SPRINT-36: service cross-field rules determine required fields by message type
     },
   })
   async sendMessage(

@@ -4,9 +4,11 @@ import {
   Delete,
   Get,
   Param,
+  ParseEnumPipe, // SPRINT-35: validate badge types on the audited revoke route
   Patch,
   Post,
   Query,
+  Req, // SPRINT-35: read the acting session ID for safe session termination
 } from '@nestjs/common';
 import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { Roles } from '../../common/decorators/roles.decorator';
@@ -29,6 +31,9 @@ import { CreateAdminPollDto } from './dto/create-admin-poll.dto';
 import { ModerateActionDto } from './dto/moderate-action.dto';
 import { ReplyToTicketDto } from './dto/reply-to-ticket.dto';
 import { SendBroadcastDto } from './dto/send-broadcast.dto';
+import { AdminSessionsQueryDto } from './dto/admin-sessions-query.dto'; // SPRINT-35: validate session list pagination and user filter
+import type { Request } from 'express'; // SPRINT-35: type the current express-session identifier
+import { BadgeType } from '@prisma/client'; // SPRINT-35: constrain badge revocation to persisted badge types
 
 @ApiTags('Admin')
 @Controller('admin')
@@ -76,8 +81,16 @@ export class AdminController {
   }
 
   @Patch('feed/:id/moderate')
-  moderateFeedPost(@Param('id') id: string, @Body() dto: ModerateActionDto) {
-    return this.adminService.moderateFeedPost(id, dto.action as any);
+  moderateFeedPost( // SPRINT-35: pass the authenticated actor into defence-in-depth authorization
+    @CurrentUser('id') adminUserId: string, // SPRINT-35: resolve acting administrator from AuthGuard
+    @Param('id') id: string, // SPRINT-35: retain target feed post identifier
+    @Body() dto: ModerateActionDto, // SPRINT-35: retain validated moderation action
+  ) { // SPRINT-35: complete defended feed moderation handler
+    return this.adminService.moderateFeedPost( // SPRINT-35: invoke service with explicit actor context
+      adminUserId, // SPRINT-35: authorize the acting administrator in the service
+      id, // SPRINT-35: identify the target post
+      dto.action as any, // SPRINT-35: preserve existing moderation action mapping
+    ); // SPRINT-35: complete defended service call
   }
 
   @Get('polls')
@@ -97,13 +110,19 @@ export class AdminController {
   }
 
   @Patch('polls/:id/toggle')
-  togglePoll(@Param('id') id: string) {
-    return this.adminService.toggleAdminPoll(id);
+  togglePoll( // SPRINT-35: pass actor context for independent poll authorization
+    @CurrentUser('id') adminUserId: string, // SPRINT-35: resolve acting administrator from AuthGuard
+    @Param('id') id: string, // SPRINT-35: retain target poll identifier
+  ) { // SPRINT-35: complete defended toggle handler
+    return this.adminService.toggleAdminPoll(adminUserId, id); // SPRINT-35: authorize before toggling poll state
   }
 
   @Delete('polls/:id')
-  deletePoll(@Param('id') id: string) {
-    return this.adminService.deleteAdminPoll(id);
+  deletePoll( // SPRINT-35: pass actor context for independent destructive authorization
+    @CurrentUser('id') adminUserId: string, // SPRINT-35: resolve acting administrator from AuthGuard
+    @Param('id') id: string, // SPRINT-35: retain target poll identifier
+  ) { // SPRINT-35: complete defended delete handler
+    return this.adminService.deleteAdminPoll(adminUserId, id); // SPRINT-35: authorize before deleting the poll
   }
 
   @Get('community/questions')
@@ -137,8 +156,11 @@ export class AdminController {
   }
 
   @Delete('community/questions/:id')
-  moderateCommunityQuestion(@Param('id') id: string) {
-    return this.adminService.moderateCommunityQuestion(id);
+  moderateCommunityQuestion( // SPRINT-35: pass actor context for independent question-moderation authorization
+    @CurrentUser('id') adminUserId: string, // SPRINT-35: resolve acting administrator from AuthGuard
+    @Param('id') id: string, // SPRINT-35: retain target question identifier
+  ) { // SPRINT-35: complete defended question moderation handler
+    return this.adminService.moderateCommunityQuestion(adminUserId, id); // SPRINT-35: authorize before deleting the question
   }
 
   @Get('roommates')
@@ -155,8 +177,13 @@ export class AdminController {
   }
 
   @Patch('roommates/:id/moderate')
-  moderateRoommate(@Param('id') id: string, @Body() dto: ModerateActionDto) {
+  moderateRoommate( // SPRINT-35: pass actor context for independent roommate-moderation authorization
+    @CurrentUser('id') adminUserId: string, // SPRINT-35: resolve acting administrator from AuthGuard
+    @Param('id') id: string, // SPRINT-35: retain target user identifier
+    @Body() dto: ModerateActionDto, // SPRINT-35: retain validated moderation action
+  ) { // SPRINT-35: complete defended roommate moderation handler
     return this.adminService.suspendRoommateProfile(
+      adminUserId, // SPRINT-35: authorize the acting administrator in the service
       id,
       dto.action as 'suspend' | 'delete',
     );
@@ -178,8 +205,16 @@ export class AdminController {
   }
 
   @Patch('restaurants/:id/moderate')
-  moderateRestaurant(@Param('id') id: string, @Body() dto: ModerateActionDto) {
-    return this.adminService.moderateRestaurant(id, dto.action as any);
+  moderateRestaurant( // SPRINT-35: pass actor context for independent restaurant authorization
+    @CurrentUser('id') adminUserId: string, // SPRINT-35: resolve acting administrator from AuthGuard
+    @Param('id') id: string, // SPRINT-35: retain target restaurant identifier
+    @Body() dto: ModerateActionDto, // SPRINT-35: retain validated moderation action
+  ) { // SPRINT-35: complete defended restaurant moderation handler
+    return this.adminService.moderateRestaurant( // SPRINT-35: invoke service with actor context
+      adminUserId, // SPRINT-35: authorize the acting administrator
+      id, // SPRINT-35: identify target restaurant
+      dto.action as any, // SPRINT-35: preserve existing action mapping
+    ); // SPRINT-35: complete defended restaurant moderation call
   }
 
   @Get('listings')
@@ -200,8 +235,16 @@ export class AdminController {
   }
 
   @Patch('listings/:id/moderate')
-  moderateListing(@Param('id') id: string, @Body() dto: ModerateActionDto) {
-    return this.adminService.moderateListing(id, dto.action as any);
+  moderateListing( // SPRINT-35: pass actor context for independent listing authorization
+    @CurrentUser('id') adminUserId: string, // SPRINT-35: resolve acting administrator from AuthGuard
+    @Param('id') id: string, // SPRINT-35: retain target listing identifier
+    @Body() dto: ModerateActionDto, // SPRINT-35: retain validated moderation action
+  ) { // SPRINT-35: complete defended listing moderation handler
+    return this.adminService.moderateListing( // SPRINT-35: invoke service with actor context
+      adminUserId, // SPRINT-35: authorize the acting administrator
+      id, // SPRINT-35: identify target listing
+      dto.action as any, // SPRINT-35: preserve existing action mapping
+    ); // SPRINT-35: complete defended listing moderation call
   }
 
   @Get('areas')
@@ -250,6 +293,48 @@ export class AdminController {
     return this.adminService.replyToSupportTicket(userId, id, dto);
   }
 
+  @Get('sessions') // SPRINT-35: expose real Redis-backed authenticated sessions
+  @ApiOperation({ summary: 'List active authenticated sessions' }) // SPRINT-35: document session monitoring purpose
+  @ApiResponse({ status: 200, description: 'Paginated active sessions.' }) // SPRINT-35: document successful list response
+  @ApiResponse({ status: 403, description: 'Admin role required' }) // SPRINT-35: document role enforcement
+  getActiveSessions(@Query() query: AdminSessionsQueryDto) { // SPRINT-35: accept page, pageSize, and optional userId
+    return this.adminService.getActiveSessions(query); // SPRINT-35: enumerate Redis sessions and batch-resolve users
+  } // SPRINT-35: complete active-session list route
+
+  @Delete('sessions/session/:sessionId') // SPRINT-35: use a distinct static segment to avoid user-route collision
+  @ApiOperation({ summary: 'Terminate one active session' }) // SPRINT-35: document targeted session revocation
+  @ApiResponse({ status: 200, description: 'Session terminated.' }) // SPRINT-35: document successful revocation
+  @ApiResponse({ status: 400, description: 'Cannot terminate current admin session' }) // SPRINT-35: document self-revocation protection
+  @ApiResponse({ status: 403, description: 'Admin role required' }) // SPRINT-35: document role enforcement
+  @ApiResponse({ status: 404, description: 'Session not found or expired' }) // SPRINT-35: document stale session identifier handling
+  terminateSession( // SPRINT-35: pass actor, current session, and target session to the service
+    @CurrentUser('id') adminUserId: string, // SPRINT-35: resolve acting administrator from AuthGuard
+    @Req() req: Request, // SPRINT-35: obtain the raw current express-session identifier
+    @Param('sessionId') sessionId: string, // SPRINT-35: accept the prefix-free target session identifier
+  ) { // SPRINT-35: complete targeted session route signature
+    return this.adminService.terminateSession( // SPRINT-35: invoke defence-in-depth revocation
+      adminUserId, // SPRINT-35: authorize the acting administrator in the service
+      req.sessionID, // SPRINT-35: protect the current admin session from termination
+      sessionId, // SPRINT-35: identify the target Redis session
+    ); // SPRINT-35: complete targeted session service call
+  } // SPRINT-35: finish targeted session route
+
+  @Delete('sessions/user/:userId') // SPRINT-35: use a distinct static segment for bulk user revocation
+  @ApiOperation({ summary: 'Terminate all active sessions for one user' }) // SPRINT-35: document compromised-account response action
+  @ApiResponse({ status: 200, description: 'Matching sessions terminated.' }) // SPRINT-35: document bulk revocation response
+  @ApiResponse({ status: 403, description: 'Admin role required' }) // SPRINT-35: document role enforcement
+  terminateUserSessions( // SPRINT-35: pass actor, current session, and target user to the service
+    @CurrentUser('id') adminUserId: string, // SPRINT-35: resolve acting administrator from AuthGuard
+    @Req() req: Request, // SPRINT-35: obtain current session for exclusion
+    @Param('userId') userId: string, // SPRINT-35: identify the compromised target account
+  ) { // SPRINT-35: complete bulk session route signature
+    return this.adminService.terminateUserSessions( // SPRINT-35: invoke bounded Redis bulk revocation
+      adminUserId, // SPRINT-35: authorize the acting administrator in the service
+      req.sessionID, // SPRINT-35: preserve the acting administrator's current session
+      userId, // SPRINT-35: filter sessions to the target user
+    ); // SPRINT-35: complete bulk termination service call
+  } // SPRINT-35: finish bulk session route
+
   @Patch('reports/:id/dismiss')
   dismissReport(
     @CurrentUser('id') adminUserId: string,
@@ -272,8 +357,11 @@ export class AdminController {
   }
 
   @Patch('settings')
-  updatePlatformSettings(@Body() dto: UpdatePlatformSettingsDto) {
-    return this.adminService.updatePlatformSettings(dto);
+  updatePlatformSettings( // SPRINT-35: pass actor context for independent settings authorization
+    @CurrentUser('id') adminUserId: string, // SPRINT-35: resolve acting administrator from AuthGuard
+    @Body() dto: UpdatePlatformSettingsDto, // SPRINT-35: retain validated platform settings
+  ) { // SPRINT-35: complete defended platform-settings handler
+    return this.adminService.updatePlatformSettings(adminUserId, dto); // SPRINT-35: authorize before updating platform settings
   }
 
   @Get('content')
@@ -345,8 +433,12 @@ export class AdminController {
   }
 
   @Patch('users/:id')
-  updateUser(@Param('id') id: string, @Body() dto: UpdateUserAdminDto) {
-    return this.adminService.updateUser(id, dto);
+  updateUser( // SPRINT-35: pass actor context for independent user-management authorization
+    @CurrentUser('id') adminUserId: string, // SPRINT-35: resolve acting administrator from AuthGuard
+    @Param('id') id: string, // SPRINT-35: retain target user identifier
+    @Body() dto: UpdateUserAdminDto, // SPRINT-35: retain validated user changes
+  ) { // SPRINT-35: complete defended user-update handler
+    return this.adminService.updateUser(adminUserId, id, dto); // SPRINT-35: authorize before changing the user
   }
 
   @Post('users/:id/warn')
@@ -367,13 +459,33 @@ export class AdminController {
     return this.adminService.grantUserBadge(adminUserId, id, dto.badgeType);
   }
 
+  @Delete('users/:id/revoke-badge/:type') // SPRINT-35: implement the audited mobile badge-revocation contract
+  @ApiOperation({ summary: 'Revoke a badge from a user' }) // SPRINT-35: document the destructive trust action
+  @ApiResponse({ status: 200, description: 'Badge revoked.' }) // SPRINT-35: document successful revocation
+  @ApiResponse({ status: 403, description: 'Admin role required' }) // SPRINT-35: document role enforcement
+  @ApiResponse({ status: 404, description: 'User badge not found' }) // SPRINT-35: document absent badge handling
+  revokeUserBadge( // SPRINT-35: pass actor, target user, and validated badge type
+    @CurrentUser('id') adminUserId: string, // SPRINT-35: resolve acting administrator from AuthGuard
+    @Param('id') id: string, // SPRINT-35: identify the target user
+    @Param('type', new ParseEnumPipe(BadgeType)) badgeType: BadgeType, // SPRINT-35: reject unsupported badge names
+  ) { // SPRINT-35: complete revoke-badge handler
+    return this.adminService.revokeUserBadge(adminUserId, id, badgeType); // SPRINT-35: authorize and remove the granted badge
+  } // SPRINT-35: finish revoke-badge route
+
   @Delete('users/:id')
-  deleteUser(@Param('id') id: string) {
-    return this.adminService.deleteUser(id);
+  deleteUser( // SPRINT-35: pass actor context for independent permanent-deletion authorization
+    @CurrentUser('id') adminUserId: string, // SPRINT-35: resolve acting administrator from AuthGuard
+    @Param('id') id: string, // SPRINT-35: retain target user identifier
+  ) { // SPRINT-35: complete defended user-delete handler
+    return this.adminService.deleteUser(adminUserId, id); // SPRINT-35: authorize before permanent deletion
   }
 
   @Patch('content/:id')
-  moderateContent(@Param('id') id: string, @Body() dto: ModerateContentDto) {
-    return this.adminService.moderateContent(id, dto);
+  moderateContent( // SPRINT-35: pass actor context for independent generic moderation authorization
+    @CurrentUser('id') adminUserId: string, // SPRINT-35: resolve acting administrator from AuthGuard
+    @Param('id') id: string, // SPRINT-35: retain target content identifier
+    @Body() dto: ModerateContentDto, // SPRINT-35: retain validated content action
+  ) { // SPRINT-35: complete defended content-moderation handler
+    return this.adminService.moderateContent(adminUserId, id, dto); // SPRINT-35: authorize before mutating generic content
   }
 }

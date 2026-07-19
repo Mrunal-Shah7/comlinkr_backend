@@ -13,6 +13,7 @@ import type { UpdatePrivacyDto } from './dto/update-privacy.dto';
 import type { BlockUserDto } from './dto/block-user.dto';
 import type { UpdateCityDto } from './dto/update-city.dto';
 import type { UpdateCultureDto } from './dto/update-culture.dto';
+import { AuthService } from '../auth/auth.service'; // SPRINT-34: revoke Apple authorization before deleting provider data
 
 const PRIVACY_DEFAULTS = {
   publicProfile: true,
@@ -25,7 +26,10 @@ const BCRYPT_ROUNDS = 12;
 export class SettingsService {
   private readonly logger = new Logger(SettingsService.name); // SPRINT-32: immediate delete diagnostics
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor( // SPRINT-34: inject the exported auth service for pre-delete Apple revocation
+    private readonly prisma: PrismaService, // SPRINT-34: preserve existing database access
+    private readonly authService: AuthService, // SPRINT-34: invoke non-blocking Apple authorization revocation
+  ) {} // SPRINT-34: complete settings dependencies
 
   async getAccount(userId: string) {
     const user = await this.prisma.user.findUnique({
@@ -318,6 +322,7 @@ export class SettingsService {
 
   /** SPRINT-32: Shared cascading hard-delete used by CRON and immediate-delete endpoint. */
   async performHardDelete(userId: string): Promise<void> {
+    await this.authService.revokeAppleAuthorization(userId); // SPRINT-34: revoke exactly once before either immediate or CRON deletion removes the token
     await this.prisma.$transaction(async (tx) => {
       // SPRINT-32: many-to-many join tables (_UserVibes, _UserInterests, _UserCommunities)
       await tx.user.update({

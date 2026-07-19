@@ -2,6 +2,7 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { v2 as cloudinary } from 'cloudinary';
 import type { UploadApiResponse } from 'cloudinary';
+import { randomUUID } from 'crypto'; // SPRINT-36: generate unguessable public audio object keys
 
 const ALLOWED_MIME_TYPES = [
   'image/jpeg',
@@ -13,6 +14,62 @@ const ALLOWED_MIME_TYPES = [
   'video/webm',
   'video/quicktime',
 ];
+
+export const AUDIO_MIME_TYPES = [
+  // SPRINT-36: accept mobile voice-note containers covered by the documented client contract
+  'audio/mp4', // SPRINT-36: Expo high-quality iOS and Android MPEG-4/AAC recording
+  'audio/x-m4a', // SPRINT-36: common iOS MIME alias for the same M4A container
+  'audio/mpeg', // SPRINT-36: standard MP3/MPEG audio
+  'audio/aac', // SPRINT-36: raw AAC recorder output
+  'audio/3gpp', // SPRINT-36: Android platform recorder 3GP container
+  'audio/webm', // SPRINT-36: Android/web recorder WebM container
+  'audio/ogg', // SPRINT-36: Android/web recorder Ogg container
+] as const; // SPRINT-36: preserve exact allowlist values
+
+export const AUDIO_MAX_SIZE_BYTES = 15 * 1024 * 1024; // SPRINT-36: allow up to ten minutes of typical compressed voice audio with overhead
+
+function audioMagicMatches(buffer: Buffer, mimeType: string): boolean {
+  // SPRINT-36: reject renamed non-audio uploads using container signatures
+  if (buffer.length < 4) return false; // SPRINT-36: every supported signature requires at least four bytes
+  if (['audio/mp4', 'audio/x-m4a', 'audio/3gpp'].includes(mimeType)) {
+    // SPRINT-36: recognize ISO base media containers
+    return (
+      // SPRINT-36: require the standard ftyp box marker
+      buffer.length >= 8 && // SPRINT-36: ensure marker offsets exist
+      buffer[4] === 0x66 && // SPRINT-36: match f
+      buffer[5] === 0x74 && // SPRINT-36: match t
+      buffer[6] === 0x79 && // SPRINT-36: match y
+      buffer[7] === 0x70 // SPRINT-36: match p
+    ); // SPRINT-36: complete ISO media signature check
+  } // SPRINT-36: complete ISO media branch
+  if (mimeType === 'audio/mpeg') {
+    // SPRINT-36: recognize ID3-tagged or frame-synchronized MPEG audio
+    return (
+      // SPRINT-36: accept either valid common MPEG prefix
+      (buffer[0] === 0x49 && buffer[1] === 0x44 && buffer[2] === 0x33) || // SPRINT-36: match ID3
+      (buffer[0] === 0xff && (buffer[1]! & 0xe0) === 0xe0) // SPRINT-36: match MPEG frame synchronization
+    ); // SPRINT-36: complete MPEG signature check
+  } // SPRINT-36: complete MPEG branch
+  if (mimeType === 'audio/aac') {
+    // SPRINT-36: recognize raw ADTS AAC
+    return buffer[0] === 0xff && (buffer[1]! & 0xf6) === 0xf0; // SPRINT-36: match the ADTS synchronization bits
+  } // SPRINT-36: complete AAC branch
+  if (mimeType === 'audio/ogg') {
+    // SPRINT-36: recognize Ogg containers
+    return buffer.subarray(0, 4).toString('ascii') === 'OggS'; // SPRINT-36: match the Ogg capture pattern
+  } // SPRINT-36: complete Ogg branch
+  if (mimeType === 'audio/webm') {
+    // SPRINT-36: recognize WebM's EBML header
+    return (
+      // SPRINT-36: require the four-byte EBML marker
+      buffer[0] === 0x1a && // SPRINT-36: match EBML byte one
+      buffer[1] === 0x45 && // SPRINT-36: match EBML byte two
+      buffer[2] === 0xdf && // SPRINT-36: match EBML byte three
+      buffer[3] === 0xa3 // SPRINT-36: match EBML byte four
+    ); // SPRINT-36: complete WebM signature check
+  } // SPRINT-36: complete WebM branch
+  return false; // SPRINT-36: reject every container outside the explicit contract
+} // SPRINT-36: complete audio magic validation
 
 const MAGIC: Array<{ mime: string; check: (buf: Buffer) => boolean }> = [
   {
@@ -125,6 +182,13 @@ export class StorageService {
       'video/mp4': 'mp4',
       'video/webm': 'webm',
       'video/quicktime': 'mov',
+      'audio/mp4': 'm4a', // SPRINT-36: preserve the MPEG-4 audio container extension
+      'audio/x-m4a': 'm4a', // SPRINT-36: normalize the iOS MIME alias to M4A
+      'audio/mpeg': 'mp3', // SPRINT-36: preserve standard MPEG audio extension
+      'audio/aac': 'aac', // SPRINT-36: preserve raw AAC extension
+      'audio/3gpp': '3gp', // SPRINT-36: preserve Android 3GP extension
+      'audio/webm': 'webm', // SPRINT-36: preserve WebM extension
+      'audio/ogg': 'ogg', // SPRINT-36: preserve Ogg extension
     };
     return map[mimeType] ?? 'bin';
   }
@@ -177,7 +241,8 @@ export class StorageService {
   }
 
   private resourceTypeFromMime(mimeType: string): 'image' | 'video' {
-    if (mimeType.startsWith('video/')) return 'video';
+    if (mimeType.startsWith('video/') || mimeType.startsWith('audio/'))
+      return 'video'; // SPRINT-36: Cloudinary delivers audio through its video resource type
     return 'image';
   }
 
@@ -249,6 +314,45 @@ export class StorageService {
     );
     return result.secure_url;
   }
+
+  async uploadAudio(
+    // SPRINT-36: provide a dedicated validated voice-note upload path
+    file: Express.Multer.File, // SPRINT-36: accept the multipart file from the authenticated controller
+    userId: string, // SPRINT-36: scope the generated public key to its uploader
+  ): Promise<{ url: string; key: string }> {
+    // SPRINT-36: return both playback URL and storage key
+    if (
+      !AUDIO_MIME_TYPES.includes(
+        file.mimetype as (typeof AUDIO_MIME_TYPES)[number],
+      )
+    ) {
+      // SPRINT-36: reject declared media types outside the audio allowlist
+      throw new BadRequestException( // SPRINT-36: provide a type-specific client error
+        `Unsupported audio type: ${file.mimetype || 'missing MIME type'}`, // SPRINT-36: name the exact validation reason
+      ); // SPRINT-36: complete invalid-type exception
+    } // SPRINT-36: complete declared MIME validation
+    if (file.size > AUDIO_MAX_SIZE_BYTES) {
+      // SPRINT-36: enforce the voice-note size ceiling
+      throw new BadRequestException('Audio file must be at most 15MB'); // SPRINT-36: name the exact size validation reason
+    } // SPRINT-36: complete size validation
+    if (!audioMagicMatches(file.buffer, file.mimetype)) {
+      // SPRINT-36: verify bytes agree with the declared supported container
+      throw new BadRequestException( // SPRINT-36: distinguish content mismatch from size failure
+        `Audio content does not match declared type ${file.mimetype}`, // SPRINT-36: name the exact type mismatch
+      ); // SPRINT-36: complete content-type exception
+    } // SPRINT-36: complete audio content validation
+    const extension = StorageService.extensionFromMime(file.mimetype); // SPRINT-36: choose the documented extension for the accepted MIME
+    const key = `messages/audio/${userId}/${randomUUID()}`; // SPRINT-36: use a dedicated public prefix and unguessable component
+    const result = await this.uploadBuffer(
+      // SPRINT-36: upload through the existing Cloudinary transport
+      file.buffer, // SPRINT-36: provide validated audio bytes
+      file.mimetype, // SPRINT-36: preserve the validated audio MIME
+      key, // SPRINT-36: store under the dedicated audio prefix
+      extension, // SPRINT-36: preserve the playable container extension
+      'upload', // SPRINT-36: match existing public message-attachment visibility
+    ); // SPRINT-36: complete public audio upload
+    return { url: result.secure_url, key }; // SPRINT-36: expose playback URL and deletion/storage key
+  } // SPRINT-36: complete dedicated audio upload method
 
   async uploadPrivateFile(
     buffer: Buffer,

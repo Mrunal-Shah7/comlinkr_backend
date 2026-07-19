@@ -7,6 +7,7 @@ import {
   createPaginationMeta,
 } from '../../common/dto/pagination.dto';
 import type { SavesQueryDto } from './dto/saves-query.dto';
+import { EventRegistrationStatus } from '@prisma/client'; // SPRINT-38: Exclude retained cancelled registrations from saved-event attendance state.
 
 const EARTH_RADIUS_MILES = 3959;
 
@@ -64,6 +65,8 @@ export class SavesService {
       isPublished: post.isPublished,
       createdAt: post.createdAt,
       updatedAt: post.updatedAt,
+      editedAt: post.editedAt ? new Date(post.editedAt).toISOString() : null, // SPRINT-37: keep saved-post edit tracking identical to feed responses
+      isEdited: post.editedAt != null, // SPRINT-37: expose the same derived edited marker in universal saves
       author: {
         id: post.author.id,
         username: post.author.username,
@@ -138,12 +141,15 @@ export class SavesService {
           badgeType: b.badgeType,
         })),
       },
-      images: (listing.images ?? []).map((img: any) => ({
-        id: img.id,
-        url: this.buildFileUrl(img.imageUrl),
-        order: img.order,
-        caption: img.caption,
-      })),
+      images: [...(listing.images ?? [])] // SPRINT-37: defensively guarantee stored image order in every saved-listing response
+        .sort((a: any, b: any) => a.order - b.order) // SPRINT-37: order ascending even if a future query omits orderBy
+        .map((img: any) => ({
+          // SPRINT-37: preserve the existing public image shape
+          id: img.id, // SPRINT-37: expose image identity
+          url: this.buildFileUrl(img.imageUrl), // SPRINT-37: expose the stored public URL
+          order: img.order, // SPRINT-37: expose persisted order
+          caption: img.caption, // SPRINT-37: preserve optional caption
+        })), // SPRINT-37: complete ordered saved-listing image formatting
       isInterested: !!isInterested,
       interestCount,
       isSaved: isSavedOverride,
@@ -184,6 +190,7 @@ export class SavesService {
       country: restaurant.country,
       phoneNumber: restaurant.phoneNumber,
       priceRange: restaurant.priceRange,
+      avgPricePerPerson: restaurant.avgPricePerPerson ?? null, // SPRINT-43: parity with FoodService.formatRestaurant (Sprint 33 field)
       averageRating: Number(restaurant.averageRating),
       totalReviews: restaurant.totalReviews,
       distanceMiles,
@@ -216,6 +223,10 @@ export class SavesService {
       isFavorited: !!isFavorited,
       isSaved: isSavedOverride,
       isOwner: restaurant.ownerId === userId,
+      latitude:
+        restaurant.latitude != null ? Number(restaurant.latitude) : null, // SPRINT-43: parity with FoodService.formatRestaurant coordinates
+      longitude:
+        restaurant.longitude != null ? Number(restaurant.longitude) : null, // SPRINT-43: parity with FoodService.formatRestaurant coordinates
     };
   }
 
@@ -261,6 +272,8 @@ export class SavesService {
       location: story.location,
       mediaUrl: story.mediaUrl,
       viewsCount: story.viewsCount,
+      commentCount: story.commentCount ?? 0, // SPRINT-43: parity with StoriesService.formatStory
+      likeCount: story.likeCount ?? 0, // SPRINT-43: parity with StoriesService.formatStory
       expiresAt: story.expiresAt,
       createdAt: story.createdAt,
       isExpired,
@@ -310,6 +323,8 @@ export class SavesService {
       ticketPrice: event.ticketPrice != null ? Number(event.ticketPrice) : null,
       capacity: event.capacity,
       attendeeCount,
+      averageRating: Number(event.averageRating ?? 0), // SPRINT-38: Keep the duplicate saved-event formatter aligned with event responses.
+      totalReviews: event.totalReviews ?? 0, // SPRINT-38: Expose event review count in unified saves.
       createdAt: event.createdAt,
       images,
       author: {
@@ -415,7 +430,10 @@ export class SavesService {
                       userBadges: { select: { badgeType: true } },
                     },
                   },
-                  attendees: { where: { userId }, select: { id: true } },
+                  attendees: {
+                    where: { userId, status: EventRegistrationStatus.ACTIVE },
+                    select: { id: true },
+                  }, // SPRINT-38: Cancelled registrations no longer count as saved-event attendance.
                   saves: { where: { userId }, select: { id: true } },
                   eventImages: { orderBy: { order: 'asc' } },
                 },

@@ -147,8 +147,20 @@ export class FeedController {
   }
 
   @Patch(':id')
-  @ApiOperation({ summary: 'Update own feed post' })
-  @ApiResponse({ status: 200, description: 'Updated post' })
+  @ApiOperation({ summary: 'Partially update an owned feed post' }) // SPRINT-37: describe owner-scoped partial editing
+  @ApiResponse({
+    status: 200,
+    description: 'Updated post in the standard feed response shape',
+  }) // SPRINT-37: document successful edit response
+  @ApiResponse({
+    status: 400,
+    description: 'No changes supplied or validation failed',
+  }) // SPRINT-37: document empty/invalid partial updates
+  @ApiResponse({
+    status: 403,
+    description: 'Only the author may edit this post',
+  }) // SPRINT-37: document ownership enforcement
+  @ApiResponse({ status: 404, description: 'Post not found' }) // SPRINT-37: document missing post behavior
   async updateFeedPost(
     @CurrentUser('id') userId: string,
     @Param('id') id: string,

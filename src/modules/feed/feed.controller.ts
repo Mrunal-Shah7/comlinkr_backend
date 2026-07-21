@@ -19,6 +19,7 @@ import {
 } from '@nestjs/swagger';
 import { FilesInterceptor } from '@nestjs/platform-express';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { OptionalAuth } from '../../common/decorators/optional-auth.decorator';
 import { FeedService } from './feed.service';
 import { FeedQueryDto } from './dto/feed-query.dto';
 import { CreateFeedPostDto } from './dto/create-feed-post.dto';
@@ -36,24 +37,26 @@ export class FeedController {
   constructor(private readonly feedService: FeedService) {}
 
   @Get()
+  @OptionalAuth()
   @ApiOperation({
     summary: 'Get city-scoped feed with optional category/trending filters',
   })
   @ApiResponse({ status: 200, description: 'Paginated feed posts' })
   async getFeed(
-    @CurrentUser('id') userId: string,
+    @CurrentUser('id') userId: string | undefined,
     @Query() query: FeedQueryDto,
   ) {
     return this.feedService.getFeed(userId, query);
   }
 
   @Get('mood')
+  @OptionalAuth()
   @ApiOperation({
     summary: 'Get neighborhood mood distribution for current city',
   })
   @ApiResponse({ status: 200, description: 'Mood counts and percentages' })
   async getNeighborhoodMood(
-    @CurrentUser('id') userId: string,
+    @CurrentUser('id') userId: string | undefined,
     @Query() query: NeighborhoodMoodQueryDto,
   ) {
     return this.feedService.getNeighborhoodMood(userId, query.city);
@@ -84,10 +87,11 @@ export class FeedController {
   }
 
   @Get(':id')
+  @OptionalAuth()
   @ApiOperation({ summary: 'Get single feed post by ID' })
   @ApiResponse({ status: 200, description: 'Feed post detail' })
   async getFeedPostById(
-    @CurrentUser('id') userId: string,
+    @CurrentUser('id') userId: string | undefined,
     @Param('id') id: string,
   ) {
     return this.feedService.getFeedPostById(userId, id);
@@ -198,6 +202,7 @@ export class FeedController {
   }
 
   @Get(':id/comments')
+  @OptionalAuth()
   @ApiOperation({ summary: 'Get paginated comments for a post' })
   @ApiResponse({ status: 200, description: 'Paginated comments' })
   async getComments(@Param('id') id: string, @Query() query: PaginationDto) {

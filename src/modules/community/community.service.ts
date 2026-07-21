@@ -21,7 +21,8 @@ export class CommunityService {
     return avatarUrl ?? null;
   }
 
-  private async getUserCity(userId: string): Promise<string | null> {
+  private async getUserCity(userId?: string): Promise<string | null> {
+    if (!userId) return null;
     const location = await this.prisma.userLocation.findUnique({
       where: { userId },
       select: { city: true },
@@ -31,7 +32,7 @@ export class CommunityService {
 
   private formatQuestion(
     question: any,
-    currentUserId: string,
+    currentUserId: string | undefined,
     upvotedIds: Set<string>,
     savedIds: Set<string>,
   ) {
@@ -59,7 +60,7 @@ export class CommunityService {
 
   private formatAnswer(
     answer: any,
-    currentUserId: string,
+    currentUserId: string | undefined,
     upvotedIds: Set<string>,
   ) {
     return {
@@ -77,7 +78,7 @@ export class CommunityService {
     };
   }
 
-  async getQuestions(userId: string, query: CommunityQueryDto) {
+  async getQuestions(userId: string | undefined, query: CommunityQueryDto) {
     const fromQuery = query.city?.trim();
     const fromLocation = (await this.getUserCity(userId))?.trim() ?? '';
     const city = fromQuery || fromLocation;
@@ -106,7 +107,7 @@ export class CommunityService {
         ? [{ upvoteCount: 'desc' as const }, { answerCount: 'desc' as const }]
         : [{ createdAt: 'desc' as const }];
 
-    const [questions, total] = await this.prisma.$transaction([
+    const [questions, total] = await Promise.all([
       this.prisma.communityQuestion.findMany({
         where,
         orderBy,
@@ -121,23 +122,25 @@ export class CommunityService {
 
     const ids = questions.map((q) => q.id);
 
-    const [upvotes, saves] = await this.prisma.$transaction([
-      this.prisma.communityUpvote.findMany({
-        where: {
-          userId,
-          targetType: 'QUESTION',
-          targetId: { in: ids },
-        },
-        select: { targetId: true },
-      }),
-      this.prisma.communitySave.findMany({
-        where: {
-          userId,
-          questionId: { in: ids },
-        },
-        select: { questionId: true },
-      }),
-    ]);
+    const [upvotes, saves] = userId
+      ? await Promise.all([
+          this.prisma.communityUpvote.findMany({
+            where: {
+              userId,
+              targetType: 'QUESTION',
+              targetId: { in: ids },
+            },
+            select: { targetId: true },
+          }),
+          this.prisma.communitySave.findMany({
+            where: {
+              userId,
+              questionId: { in: ids },
+            },
+            select: { questionId: true },
+          }),
+        ])
+      : [[], []];
 
     const upvotedIds = new Set(upvotes.map((u) => u.targetId));
     const savedIds = new Set(saves.map((s) => s.questionId));
@@ -152,7 +155,7 @@ export class CommunityService {
     };
   }
 
-  async getQuestionById(userId: string, questionId: string) {
+  async getQuestionById(userId: string | undefined, questionId: string) {
     const question = await this.prisma.communityQuestion.findUnique({
       where: { id: questionId },
       include: { author: true },
@@ -170,29 +173,30 @@ export class CommunityService {
       include: { author: true },
     });
 
-    const [questionUpvotes, questionSaves, answerUpvotes] =
-      await this.prisma.$transaction([
-        this.prisma.communityUpvote.findMany({
-          where: {
-            userId,
-            targetType: 'QUESTION',
-            targetId: questionId,
-          },
-          select: { targetId: true },
-        }),
-        this.prisma.communitySave.findMany({
-          where: { userId, questionId },
-          select: { questionId: true },
-        }),
-        this.prisma.communityUpvote.findMany({
-          where: {
-            userId,
-            targetType: 'ANSWER',
-            targetId: { in: answers.map((a) => a.id) },
-          },
-          select: { targetId: true },
-        }),
-      ]);
+    const [questionUpvotes, questionSaves, answerUpvotes] = userId
+      ? await this.prisma.$transaction([
+          this.prisma.communityUpvote.findMany({
+            where: {
+              userId,
+              targetType: 'QUESTION',
+              targetId: questionId,
+            },
+            select: { targetId: true },
+          }),
+          this.prisma.communitySave.findMany({
+            where: { userId, questionId },
+            select: { questionId: true },
+          }),
+          this.prisma.communityUpvote.findMany({
+            where: {
+              userId,
+              targetType: 'ANSWER',
+              targetId: { in: answers.map((a) => a.id) },
+            },
+            select: { targetId: true },
+          }),
+        ])
+      : [[], [], []];
 
     const questionUpvotedIds = new Set(questionUpvotes.map((u) => u.targetId));
     const questionSavedIds = new Set(questionSaves.map((s) => s.questionId));
@@ -454,7 +458,7 @@ export class CommunityService {
     return { saved: true };
   }
 
-  async getCommunityStats(userId: string, cityOverride?: string) {
+  async getCommunityStats(userId?: string, cityOverride?: string) {
     const trimmed = cityOverride?.trim();
     const fromLocation = (await this.getUserCity(userId))?.trim() ?? '';
     const city = trimmed || fromLocation;
@@ -462,20 +466,19 @@ export class CommunityService {
       return { membersCount: 0, questionsCount: 0, answersCount: 0 };
     }
 
-    const [membersCount, questionsCount, answersCount] =
-      await this.prisma.$transaction([
-        this.prisma.user.count({
-          where: { location: { city: { equals: city, mode: 'insensitive' } } },
-        }),
-        this.prisma.communityQuestion.count({
-          where: { city: { equals: city, mode: 'insensitive' } },
-        }),
-        this.prisma.communityAnswer.count({
-          where: {
-            question: { city: { equals: city, mode: 'insensitive' } },
-          },
-        }),
-      ]);
+    const [membersCount, questionsCount, answersCount] = await Promise.all([
+      this.prisma.user.count({
+        where: { location: { city: { equals: city, mode: 'insensitive' } } },
+      }),
+      this.prisma.communityQuestion.count({
+        where: { city: { equals: city, mode: 'insensitive' } },
+      }),
+      this.prisma.communityAnswer.count({
+        where: {
+          question: { city: { equals: city, mode: 'insensitive' } },
+        },
+      }),
+    ]);
 
     return { membersCount, questionsCount, answersCount };
   }
@@ -599,7 +602,7 @@ export class CommunityService {
     });
   }
 
-  async getPolls(userId: string, cityOverride?: string) {
+  async getPolls(userId?: string, cityOverride?: string) {
     const trimmed = cityOverride?.trim();
     const fromLocation = (await this.getUserCity(userId))?.trim() ?? '';
     const city = trimmed || fromLocation;
@@ -622,9 +625,11 @@ export class CommunityService {
 
     const pollIds = polls.map((p) => p.id);
     const [myVotes, countsMap] = await Promise.all([
-      this.prisma.communityPollVote.findMany({
-        where: { userId, pollId: { in: pollIds } },
-      }),
+      userId
+        ? this.prisma.communityPollVote.findMany({
+            where: { userId, pollId: { in: pollIds } },
+          })
+        : Promise.resolve([]),
       this.buildPollVoteCountsMap(polls),
     ]);
     const voteByPoll = new Map(myVotes.map((v) => [v.pollId, v.optionId]));

@@ -62,11 +62,14 @@ export class FoodService {
     return imageUrl;
   }
 
-  private async getUserLocation(userId: string): Promise<{
+  private async getUserLocation(userId?: string): Promise<{
     city: string | null;
     latitude: number | null;
     longitude: number | null;
   }> {
+    if (!userId) {
+      return { city: null, latitude: null, longitude: null };
+    }
     const loc = await this.prisma.userLocation.findUnique({
       where: { userId },
       select: { city: true, latitude: true, longitude: true },
@@ -156,7 +159,7 @@ export class FoodService {
     };
   }
 
-  async getRestaurants(userId: string, query: RestaurantQueryDto) {
+  async getRestaurants(userId: string | undefined, query: RestaurantQueryDto) {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
     const sort = query.sort ?? 'newest';
@@ -231,7 +234,7 @@ export class FoodService {
     const orderBy: Prisma.RestaurantOrderByWithRelationInput =
       sort === 'rating' ? { averageRating: 'desc' } : { createdAt: 'desc' };
 
-    const [items, total] = await this.prisma.$transaction([
+    const [items, total] = await Promise.all([
       this.prisma.restaurant.findMany({
         where,
         orderBy,
@@ -248,7 +251,7 @@ export class FoodService {
     return { data, meta: createPaginationMeta(page, limit, total) };
   }
 
-  async getRestaurantById(userId: string, restaurantId: string) {
+  async getRestaurantById(userId: string | undefined, restaurantId: string) {
     const restaurant = await this.prisma.restaurant.findUnique({
       where: { id: restaurantId },
       include: {
@@ -640,7 +643,7 @@ export class FoodService {
     }
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
-    const [items, total] = await this.prisma.$transaction([
+    const [items, total] = await Promise.all([
       this.prisma.restaurantReview.findMany({
         where: { restaurantId },
         orderBy: { createdAt: 'desc' },

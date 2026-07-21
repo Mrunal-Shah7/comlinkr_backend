@@ -55,7 +55,8 @@ export class HousingService {
       })); // SPRINT-37: complete ordered image mapping
   } // SPRINT-37: complete shared image formatter
 
-  private async getUserCity(userId: string): Promise<string | null> {
+  private async getUserCity(userId?: string): Promise<string | null> {
+    if (!userId) return null;
     const loc = await this.prisma.userLocation.findUnique({
       where: { userId },
       select: { city: true },
@@ -131,7 +132,7 @@ export class HousingService {
     };
   }
 
-  async getListings(userId: string, query: HousingQueryDto) {
+  async getListings(userId: string | undefined, query: HousingQueryDto) {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
     let city: string | null = query.city ?? null;
@@ -161,7 +162,7 @@ export class HousingService {
       ];
     }
 
-    const [items, total] = await this.prisma.$transaction([
+    const [items, total] = await Promise.all([
       this.prisma.housingListing.findMany({
         where,
         orderBy: [{ isFeatured: 'desc' }, { createdAt: 'desc' }],
@@ -173,14 +174,18 @@ export class HousingService {
           },
           images: { orderBy: { order: 'asc' } },
           _count: { select: { interests: true } },
-          interests: {
-            where: { userId },
-            select: { id: true },
-          },
-          saves: {
-            where: { userId },
-            select: { id: true },
-          },
+          interests: userId
+            ? {
+                where: { userId },
+                select: { id: true },
+              }
+            : false,
+          saves: userId
+            ? {
+                where: { userId },
+                select: { id: true },
+              }
+            : false,
         },
       }),
       this.prisma.housingListing.count({ where }),
@@ -236,7 +241,7 @@ export class HousingService {
     return { data, meta: createPaginationMeta(page, limit, total) };
   }
 
-  async getListingById(userId: string, listingId: string) {
+  async getListingById(userId: string | undefined, listingId: string) {
     const listing = await this.prisma.housingListing.findUnique({
       where: { id: listingId },
       include: {
@@ -245,14 +250,18 @@ export class HousingService {
         },
         images: { orderBy: { order: 'asc' } },
         _count: { select: { interests: true } },
-        interests: {
-          where: { userId },
-          select: { id: true },
-        },
-        saves: {
-          where: { userId },
-          select: { id: true },
-        },
+        interests: userId
+          ? {
+              where: { userId },
+              select: { id: true },
+            }
+          : false,
+        saves: userId
+          ? {
+              where: { userId },
+              select: { id: true },
+            }
+          : false,
       },
     });
     if (!listing) {

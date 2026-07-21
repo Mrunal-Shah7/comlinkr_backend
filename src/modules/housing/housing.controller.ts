@@ -21,6 +21,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { OptionalAuth } from '../../common/decorators/optional-auth.decorator';
 import { HousingService, LISTING_IMAGE_MAX } from './housing.service'; // SPRINT-37: use one shared listing image maximum
 import { CreateListingDto } from './dto/create-listing.dto';
 import { CreateListingReportDto } from './dto/create-listing-report.dto';
@@ -37,6 +38,7 @@ export class HousingController {
   constructor(private readonly housingService: HousingService) {}
 
   @Get()
+  @OptionalAuth()
   @ApiOperation({ summary: 'List housing listings with filters' })
   @ApiQuery({ name: 'page', required: false })
   @ApiQuery({ name: 'limit', required: false })
@@ -52,7 +54,7 @@ export class HousingController {
   @ApiQuery({ name: 'search', required: false })
   @ApiResponse({ status: 200, description: 'Paginated listings' })
   async getListings(
-    @CurrentUser('id') userId: string,
+    @CurrentUser('id') userId: string | undefined,
     @Query() query: HousingQueryDto,
   ) {
     return this.housingService.getListings(userId, query);
@@ -94,11 +96,12 @@ export class HousingController {
   }
 
   @Get(':id')
+  @OptionalAuth()
   @ApiOperation({ summary: 'Get listing by ID' })
   @ApiResponse({ status: 200, description: 'Listing detail' })
   @ApiResponse({ status: 404, description: 'Listing not found' })
   async getListingById(
-    @CurrentUser('id') userId: string,
+    @CurrentUser('id') userId: string | undefined,
     @Param('id') id: string,
   ) {
     return this.housingService.getListingById(userId, id);

@@ -43,7 +43,8 @@ export class ChallengesService {
     return `${minutes}m left`;
   }
 
-  private async getUserCity(userId: string): Promise<string | null> {
+  private async getUserCity(userId?: string): Promise<string | null> {
+    if (!userId) return null;
     const loc = await this.prisma.userLocation.findUnique({
       where: { userId },
       select: { city: true },
@@ -95,7 +96,7 @@ export class ChallengesService {
     };
   }
 
-  async getChallenges(userId: string, query: ChallengesQueryDto) {
+  async getChallenges(userId: string | undefined, query: ChallengesQueryDto) {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
     const status = query.status ?? 'ACTIVE';
@@ -112,7 +113,7 @@ export class ChallengesService {
       };
     }
 
-    const [items, total] = await this.prisma.$transaction([
+    const [items, total] = await Promise.all([
       this.prisma.challenge.findMany({
         where,
         orderBy: { createdAt: 'desc' },
@@ -127,10 +128,12 @@ export class ChallengesService {
               avatarUrl: true,
             },
           },
-          participants: {
-            where: { userId },
-            select: { id: true },
-          },
+          participants: userId
+            ? {
+                where: { userId },
+                select: { id: true },
+              }
+            : false,
         },
       }),
       this.prisma.challenge.count({ where }),
@@ -140,7 +143,7 @@ export class ChallengesService {
     return { data, meta: createPaginationMeta(page, limit, total) };
   }
 
-  async getChallengeById(userId: string, challengeId: string) {
+  async getChallengeById(userId: string | undefined, challengeId: string) {
     const challenge = await this.prisma.challenge.findUnique({
       where: { id: challengeId },
       include: {
@@ -152,10 +155,12 @@ export class ChallengesService {
             avatarUrl: true,
           },
         },
-        participants: {
-          where: { userId },
-          select: { id: true },
-        },
+        participants: userId
+          ? {
+              where: { userId },
+              select: { id: true },
+            }
+          : false,
       },
     });
     if (!challenge) {

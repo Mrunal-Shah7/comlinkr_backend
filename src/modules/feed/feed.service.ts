@@ -43,7 +43,7 @@ export class FeedService {
     return imageUrl;
   }
 
-  private formatFeedPost(post: any, currentUserId: string) {
+  private formatFeedPost(post: any, currentUserId?: string) {
     const isLiked = (post.likes?.length ?? 0) > 0;
     const isSaved = (post.saves?.length ?? 0) > 0;
 
@@ -78,11 +78,12 @@ export class FeedService {
       })),
       isLiked,
       isSaved,
-      isOwner: post.authorId === currentUserId,
+      isOwner: !!currentUserId && post.authorId === currentUserId,
     };
   }
 
-  private async getUserCity(userId: string): Promise<string | null> {
+  private async getUserCity(userId?: string): Promise<string | null> {
+    if (!userId) return null;
     const location = await this.prisma.userLocation.findUnique({
       where: { userId },
       select: { city: true },
@@ -96,7 +97,7 @@ export class FeedService {
   }
 
   private async resolveMoodCity(
-    userId: string,
+    userId?: string,
     cityOverride?: string,
   ): Promise<{ city: string; cityKey: string } | null> {
     const provided = cityOverride?.trim();
@@ -106,15 +107,17 @@ export class FeedService {
   }
 
   private async buildNeighborhoodMoodSummary(
-    userId: string,
+    userId: string | undefined,
     city: string,
     cityKey: string,
   ) {
-    const [myVote, counts] = await this.prisma.$transaction([
-      this.prisma.neighborhoodMoodVote.findUnique({
-        where: { userId_cityKey: { userId, cityKey } },
-        select: { mood: true },
-      }),
+    const [myVote, counts] = await Promise.all([
+      userId
+        ? this.prisma.neighborhoodMoodVote.findUnique({
+            where: { userId_cityKey: { userId, cityKey } },
+            select: { mood: true },
+          })
+        : Promise.resolve(null),
       this.prisma.neighborhoodMoodVote.findMany({
         where: { cityKey },
         select: { mood: true },
@@ -147,7 +150,7 @@ export class FeedService {
     };
   }
 
-  async getNeighborhoodMood(userId: string, cityOverride?: string) {
+  async getNeighborhoodMood(userId: string | undefined, cityOverride?: string) {
     const cityData = await this.resolveMoodCity(userId, cityOverride);
     if (!cityData) {
       return {
@@ -198,8 +201,9 @@ export class FeedService {
     );
   }
 
-  async getFeed(userId: string, query: FeedQueryDto) {
-    const city = await this.getUserCity(userId);
+  async getFeed(userId: string | undefined, query: FeedQueryDto) {
+    const city =
+      query.city?.trim() || (await this.getUserCity(userId)) || null;
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
 
@@ -213,7 +217,7 @@ export class FeedService {
       ? {
           isPublished: true,
           OR: [
-            { authorId: userId },
+            ...(userId ? [{ authorId: userId }] : []),
             {
               author: {
                 OR: [
@@ -245,7 +249,7 @@ export class FeedService {
       orderBy.push({ createdAt: 'desc' });
     }
 
-    const [items, total] = await this.prisma.$transaction([
+    const [items, total] = await Promise.all([
       this.prisma.feedPost.findMany({
         where,
         orderBy,
@@ -254,14 +258,18 @@ export class FeedService {
         include: {
           author: true,
           media: true,
-          likes: {
-            where: { userId },
-            select: { id: true },
-          },
-          saves: {
-            where: { userId },
-            select: { id: true },
-          },
+          likes: userId
+            ? {
+                where: { userId },
+                select: { id: true },
+              }
+            : false,
+          saves: userId
+            ? {
+                where: { userId },
+                select: { id: true },
+              }
+            : false,
         },
       }),
       this.prisma.feedPost.count({ where }),
@@ -274,20 +282,24 @@ export class FeedService {
     };
   }
 
-  async getFeedPostById(userId: string, postId: string) {
+  async getFeedPostById(userId: string | undefined, postId: string) {
     const post = await this.prisma.feedPost.findUnique({
       where: { id: postId },
       include: {
         author: true,
         media: true,
-        likes: {
-          where: { userId },
-          select: { id: true },
-        },
-        saves: {
-          where: { userId },
-          select: { id: true },
-        },
+        likes: userId
+          ? {
+              where: { userId },
+              select: { id: true },
+            }
+          : false,
+        saves: userId
+          ? {
+              where: { userId },
+              select: { id: true },
+            }
+          : false,
       },
     });
 

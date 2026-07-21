@@ -22,6 +22,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { OptionalAuth } from '../../common/decorators/optional-auth.decorator';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { FoodService } from './food.service';
 import { CreateRestaurantDto } from './dto/create-restaurant.dto';
@@ -58,8 +59,9 @@ export class FoodController {
     enum: ['rating', 'distance', 'newest'],
   })
   @ApiResponse({ status: 200, description: 'Paginated restaurants' })
+  @OptionalAuth()
   async getRestaurants(
-    @CurrentUser('id') userId: string,
+    @CurrentUser('id') userId: string | undefined,
     @Query() query: RestaurantQueryDto,
   ) {
     return this.foodService.getRestaurants(userId, query);
@@ -123,6 +125,7 @@ export class FoodController {
   }
 
   @Get(':id/reviews')
+  @OptionalAuth()
   @ApiOperation({ summary: 'Get paginated reviews for a restaurant' })
   @ApiQuery({ name: 'page', required: false })
   @ApiQuery({ name: 'limit', required: false })
@@ -188,11 +191,12 @@ export class FoodController {
   }
 
   @Get(':id')
+  @OptionalAuth()
   @ApiOperation({ summary: 'Get restaurant by ID' })
   @ApiResponse({ status: 200, description: 'Restaurant detail' })
   @ApiResponse({ status: 404, description: 'Restaurant not found' })
   async getRestaurantById(
-    @CurrentUser('id') userId: string,
+    @CurrentUser('id') userId: string | undefined,
     @Param('id') id: string,
   ) {
     return this.foodService.getRestaurantById(userId, id);

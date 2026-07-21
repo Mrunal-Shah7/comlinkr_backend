@@ -12,6 +12,7 @@ import { NewsService } from './news.service';
 import { NewsExploreQueryDto } from './dto/news-explore-query.dto';
 import { AuthGuard } from '../../common/guards/auth.guard';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { OptionalAuth } from '../../common/decorators/optional-auth.decorator';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { AddNewsCommentDto } from './dto/add-news-comment.dto';
 import { SaveNewsArticleDto } from './dto/save-news-article.dto'; // SPRINT-30
@@ -22,6 +23,7 @@ export class NewsController {
   constructor(private readonly newsService: NewsService) {}
 
   @Get('explore')
+  @OptionalAuth()
   @ApiOperation({
     summary:
       'Aggregated live news for Explore (Google News RSS via server — same mix as mobile)',
@@ -71,9 +73,9 @@ export class NewsController {
   }
 
   @Get('articles/:id/stats')
-  @UseGuards(AuthGuard)
+  @OptionalAuth()
   getArticleStats(
-    @CurrentUser('id') userId: string,
+    @CurrentUser('id') userId: string | undefined,
     @Param('id') articleId: string,
   ) {
     return this.newsService.getArticleStats(userId, articleId);

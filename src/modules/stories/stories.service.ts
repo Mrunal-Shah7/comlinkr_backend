@@ -68,10 +68,10 @@ export class StoriesService {
   }
 
   private async fetchSavedStoryIdSet(
-    userId: string,
+    userId: string | undefined,
     storyIds: string[],
   ): Promise<Set<string>> {
-    if (storyIds.length === 0) return new Set();
+    if (!userId || storyIds.length === 0) return new Set();
     const rows = await this.prisma.storySave.findMany({
       where: { userId, storyId: { in: storyIds } },
       select: { storyId: true },
@@ -140,8 +140,8 @@ export class StoriesService {
     return this.formatStory(created, false);
   }
 
-  async getActiveStories(userId: string) {
-    const userCity = await this.getUserCity(userId);
+  async getActiveStories(userId?: string, cityOverride?: string) {
+    const userCity = cityOverride?.trim() || (await this.getUserCity(userId));
     const now = new Date();
     const stories = await this.prisma.story.findMany({
       where: {
@@ -204,7 +204,8 @@ export class StoriesService {
     return stories.map((s) => this.formatStory(s, savedSet.has(s.id)));
   }
 
-  private async getUserCity(userId: string): Promise<string | null> {
+  private async getUserCity(userId?: string): Promise<string | null> {
+    if (!userId) return null;
     const loc = await this.prisma.userLocation.findUnique({
       where: { userId },
       select: { city: true },
@@ -212,7 +213,7 @@ export class StoriesService {
     return loc?.city ?? null;
   }
 
-  async viewStory(userId: string, storyId: string) {
+  async viewStory(userId: string | undefined, storyId: string) {
     const story = await this.prisma.story.findUnique({
       where: { id: storyId },
       include: {
@@ -245,12 +246,14 @@ export class StoriesService {
       })
       .catch(() => {});
 
-    const save = await this.prisma.storySave.findUnique({
-      where: {
-        userId_storyId: { userId, storyId },
-      },
-      select: { id: true },
-    });
+    const save = userId
+      ? await this.prisma.storySave.findUnique({
+          where: {
+            userId_storyId: { userId, storyId },
+          },
+          select: { id: true },
+        })
+      : null;
     return this.formatStory(story, !!save);
   }
 
@@ -508,7 +511,7 @@ export class StoriesService {
     return { liked: true as const, likeCount: updated.likeCount };
   }
 
-  async getStoryLikeStatus(userId: string, storyId: string) {
+  async getStoryLikeStatus(userId: string | undefined, storyId: string) {
     const story = await this.prisma.story.findUnique({
       where: { id: storyId },
       select: { id: true, likeCount: true },
@@ -519,13 +522,12 @@ export class StoriesService {
         message: 'Story not found',
       });
     }
-    const [, likedByMe] = await Promise.all([
-      Promise.resolve(story.likeCount),
-      this.prisma.storyLike.findUnique({
-        where: { userId_storyId: { userId, storyId } },
-        select: { id: true },
-      }),
-    ]);
+    const likedByMe = userId
+      ? await this.prisma.storyLike.findUnique({
+          where: { userId_storyId: { userId, storyId } },
+          select: { id: true },
+        })
+      : null;
     return { likeCount: story.likeCount, likedByMe: !!likedByMe };
   }
 

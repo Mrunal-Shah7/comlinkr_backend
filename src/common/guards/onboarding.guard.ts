@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
+import { IS_OPTIONAL_AUTH_KEY } from '../decorators/optional-auth.decorator';
 import { SKIP_ONBOARDING_KEY } from '../decorators/skip-onboarding.decorator';
 
 @Injectable()
@@ -21,6 +22,20 @@ export class OnboardingGuard implements CanActivate {
       return true;
     }
 
+    const isOptionalAuth = this.reflector.getAllAndOverride<boolean>(
+      IS_OPTIONAL_AUTH_KEY,
+      [context.getHandler(), context.getClass()],
+    );
+    if (isOptionalAuth) {
+      // Guests may browse; signed-in users on these routes still need onboarding
+      // only when a user was attached — skip the hard block for guests.
+      const request = context.switchToHttp().getRequest();
+      if (!request.user) {
+        return true;
+      }
+      // Fall through to onboarding check for authenticated callers
+    }
+
     const skipOnboarding = this.reflector.getAllAndOverride<boolean>(
       SKIP_ONBOARDING_KEY,
       [context.getHandler(), context.getClass()],
@@ -33,7 +48,7 @@ export class OnboardingGuard implements CanActivate {
     const user = request.user;
 
     if (!user) {
-      return true; // AuthGuard will have already rejected
+      return true; // AuthGuard will have already rejected (or optional guest)
     }
 
     if (user.onboardingCompleted !== true) {

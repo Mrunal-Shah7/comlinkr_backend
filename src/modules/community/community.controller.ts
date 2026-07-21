@@ -7,6 +7,7 @@ import {
   ApiBody,
 } from '@nestjs/swagger';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { OptionalAuth } from '../../common/decorators/optional-auth.decorator';
 import { CommunityService } from './community.service';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { CommunityQueryDto } from './dto/community-query.dto';
@@ -21,12 +22,13 @@ export class CommunityController {
   constructor(private readonly communityService: CommunityService) {}
 
   @Get('polls')
+  @OptionalAuth()
   @ApiOperation({
     summary: 'Active Would You Rather–style polls for your city',
   })
   @ApiResponse({ status: 200, description: 'List of polls with vote tallies' })
   async getPolls(
-    @CurrentUser('id') userId: string,
+    @CurrentUser('id') userId: string | undefined,
     @Query('city') city?: string,
   ) {
     return this.communityService.getPolls(userId, city);
@@ -48,10 +50,11 @@ export class CommunityController {
   }
 
   @Get('questions')
+  @OptionalAuth()
   @ApiOperation({ summary: 'Get paginated city-scoped community questions' })
   @ApiResponse({ status: 200, description: 'Paginated questions' })
   async getQuestions(
-    @CurrentUser('id') userId: string,
+    @CurrentUser('id') userId: string | undefined,
     @Query() query: CommunityQueryDto,
   ) {
     return this.communityService.getQuestions(userId, query);
@@ -70,22 +73,24 @@ export class CommunityController {
   }
 
   @Get('stats')
+  @OptionalAuth()
   @ApiOperation({
     summary: 'Get community stats for a city (or user profile city)',
   })
   @ApiResponse({ status: 200, description: 'Members, questions, answers' })
   async getCommunityStats(
-    @CurrentUser('id') userId: string,
+    @CurrentUser('id') userId: string | undefined,
     @Query() query: CommunityStatsQueryDto,
   ) {
     return this.communityService.getCommunityStats(userId, query.city);
   }
 
   @Get('questions/:id')
+  @OptionalAuth()
   @ApiOperation({ summary: 'Get question detail with answers' })
   @ApiResponse({ status: 200, description: 'Question with answers' })
   async getQuestionById(
-    @CurrentUser('id') userId: string,
+    @CurrentUser('id') userId: string | undefined,
     @Param('id') id: string,
   ) {
     return this.communityService.getQuestionById(userId, id);

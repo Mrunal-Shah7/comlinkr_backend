@@ -21,6 +21,7 @@ import {
 } from '@nestjs/swagger';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Public } from '../../common/decorators/public.decorator';
+import { OptionalAuth } from '../../common/decorators/optional-auth.decorator';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { StoriesService } from './stories.service';
 import { CreateStoryDto } from './dto/create-story.dto';
@@ -76,10 +77,15 @@ export class StoriesController {
   }
 
   @Get()
+  @OptionalAuth()
   @ApiOperation({ summary: "Active stories in user's city" })
+  @ApiQuery({ name: 'city', required: false })
   @ApiResponse({ status: 200, description: 'Array of active stories' })
-  async getActiveStories(@CurrentUser('id') userId: string) {
-    return this.storiesService.getActiveStories(userId);
+  async getActiveStories(
+    @CurrentUser('id') userId: string | undefined,
+    @Query('city') city?: string,
+  ) {
+    return this.storiesService.getActiveStories(userId, city);
   }
 
   /** Before @Get(':id') — paginated comments (public). */
@@ -124,20 +130,25 @@ export class StoriesController {
   }
 
   @Get(':id/like')
+  @OptionalAuth()
   @ApiOperation({ summary: 'Get story like count + liked-by-me state' })
   @ApiResponse({ status: 200, description: 'Like status' })
   async getLikeStatus(
-    @CurrentUser('id') userId: string,
+    @CurrentUser('id') userId: string | undefined,
     @Param('id') id: string,
   ) {
     return this.storiesService.getStoryLikeStatus(userId, id);
   }
 
   @Get(':id')
+  @OptionalAuth()
   @ApiOperation({ summary: 'View a story (increments view count)' })
   @ApiResponse({ status: 200, description: 'Story detail' })
   @ApiResponse({ status: 404, description: 'Not found or expired' })
-  async viewStory(@CurrentUser('id') userId: string, @Param('id') id: string) {
+  async viewStory(
+    @CurrentUser('id') userId: string | undefined,
+    @Param('id') id: string,
+  ) {
     return this.storiesService.viewStory(userId, id);
   }
 

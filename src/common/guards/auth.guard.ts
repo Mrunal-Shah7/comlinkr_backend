@@ -7,6 +7,7 @@ import {
 import { Reflector } from '@nestjs/core';
 import { PrismaService } from '../../prisma/prisma.service';
 import { IS_PUBLIC_KEY } from '../decorators/public.decorator';
+import { IS_OPTIONAL_AUTH_KEY } from '../decorators/optional-auth.decorator';
 
 /**
  * Cookie / express-session only (no Bearer JWT).
@@ -28,14 +29,39 @@ export class AuthGuard implements CanActivate {
       return true;
     }
 
-    const request = context.switchToHttp().getRequest();
-    const userId = request.session?.userId as string | undefined;
+    const isOptionalAuth = this.reflector.getAllAndOverride<boolean>(
+      IS_OPTIONAL_AUTH_KEY,
+      [context.getHandler(), context.getClass()],
+    );
 
-    if (!userId) {
+    const request = context.switchToHttp().getRequest();
+
+    if (isOptionalAuth) {
+      await this.tryAttachUserFromSession(request);
+      return true;
+    }
+
+    const attached = await this.tryAttachUserFromSession(request);
+    if (!attached) {
       throw new UnauthorizedException({
         code: 'AUTH_SESSION_EXPIRED',
         message: 'Session expired or not authenticated',
       });
+    }
+    return true;
+  }
+
+  /**
+   * Hydrate `request.user` from the session when possible.
+   * Returns true if a valid user was attached; false otherwise (never throws).
+   */
+  private async tryAttachUserFromSession(request: {
+    session?: { userId?: string };
+    user?: unknown;
+  }): Promise<boolean> {
+    const userId = request.session?.userId as string | undefined;
+    if (!userId) {
+      return false;
     }
 
     const user = await this.prisma.user.findUnique({
@@ -50,21 +76,16 @@ export class AuthGuard implements CanActivate {
     });
 
     if (!user) {
-      throw new UnauthorizedException({
-        code: 'AUTH_SESSION_EXPIRED',
-        message: 'Session expired or not authenticated',
-      });
+      return false;
     }
+
     const now = new Date();
     if (!user.isActive) {
       if (user.deletedAt && user.deletedAt > now) {
         request.user = user;
         return true;
       }
-      throw new UnauthorizedException({
-        code: 'AUTH_SESSION_EXPIRED',
-        message: 'Session expired or not authenticated',
-      });
+      return false;
     }
 
     request.user = user;

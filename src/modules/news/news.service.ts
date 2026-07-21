@@ -233,17 +233,21 @@ export class NewsService {
     return [...this.activeLocations];
   }
 
-  async getArticleStats(userId: string, articleId: string) {
+  async getArticleStats(userId: string | undefined, articleId: string) {
     const [likeCount, commentCount, likedByMe, savedByMe] = await Promise.all([
       this.prisma.newsArticleLike.count({ where: { articleId } }),
       this.prisma.newsArticleComment.count({ where: { articleId } }),
-      this.prisma.newsArticleLike.findUnique({
-        where: { userId_articleId: { userId, articleId } },
-      }),
-      this.prisma.newsArticleSave.findUnique({
-        // SPRINT-30
-        where: { userId_articleId: { userId, articleId } },
-      }),
+      userId
+        ? this.prisma.newsArticleLike.findUnique({
+            where: { userId_articleId: { userId, articleId } },
+          })
+        : Promise.resolve(null),
+      userId
+        ? this.prisma.newsArticleSave.findUnique({
+            // SPRINT-30
+            where: { userId_articleId: { userId, articleId } },
+          })
+        : Promise.resolve(null),
     ]);
 
     return {

@@ -10,7 +10,14 @@ export class PrismaService
 {
   constructor(configService: ConfigService) {
     const connectionString = configService.getOrThrow<string>('DATABASE_URL');
-    const adapter = new PrismaPg({ connectionString });
+    // Guest Explore fires many parallel reads against remote Postgres.
+    // Raise pool size / acquire timeout so list endpoints don't starve.
+    const adapter = new PrismaPg({
+      connectionString,
+      max: 20,
+      connectionTimeoutMillis: 15_000,
+      idleTimeoutMillis: 30_000,
+    });
     super({ adapter });
   }
 

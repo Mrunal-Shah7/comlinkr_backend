@@ -47,7 +47,8 @@ export class EventsService {
     return this.storageService.getReadUrlForClient(imageUrl);
   }
 
-  private async getUserCity(userId: string): Promise<string | null> {
+  private async getUserCity(userId?: string): Promise<string | null> {
+    if (!userId) return null;
     const loc = await this.prisma.userLocation.findUnique({
       where: { userId },
       select: { city: true },
@@ -61,9 +62,9 @@ export class EventsService {
     const isFull = capacity != null && attendeeCount >= capacity;
     const spotsLeft =
       capacity != null ? Math.max(0, capacity - attendeeCount) : null;
-    const isAttending = currentUserId && (event.attendees?.length ?? 0) > 0;
-    const savedByMe = currentUserId && (event.saves?.length ?? 0) > 0;
-    const isSaved = !!savedByMe;
+    const isAttending = !!(currentUserId && (event.attendees?.length ?? 0) > 0);
+    const savedByMe = !!(currentUserId && (event.saves?.length ?? 0) > 0);
+    const isSaved = savedByMe;
     const imageRows = event.eventImages ?? [];
     const sortedImages = [...imageRows].sort(
       (a: { order: number }, b: { order: number }) => a.order - b.order,
@@ -95,13 +96,13 @@ export class EventsService {
       createdAt: event.createdAt,
       images,
       author: {
-        id: event.author.id,
-        username: event.author.username,
-        name: event.author.fullName,
-        avatarUrl: event.author.avatarUrl
+        id: event.author?.id ?? null,
+        username: event.author?.username ?? null,
+        name: event.author?.fullName ?? null,
+        avatarUrl: event.author?.avatarUrl
           ? await this.buildFileUrl(event.author.avatarUrl)
           : null,
-        badges: (event.author.userBadges ?? []).map(
+        badges: (event.author?.userBadges ?? []).map(
           (b: { badgeType: string }) => ({
             badgeType: b.badgeType,
           }),
@@ -131,7 +132,7 @@ export class EventsService {
     };
   }
 
-  async getEvents(userId: string, query: EventsQueryDto) {
+  async getEvents(userId: string | undefined, query: EventsQueryDto) {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
     let city: string | null = query.city ?? null;
@@ -164,7 +165,7 @@ export class EventsService {
     }
     if (dateCondition) where.date = dateCondition;
 
-    const [items, total] = await this.prisma.$transaction([
+    const [items, total] = await Promise.all([
       this.prisma.event.findMany({
         where,
         orderBy: { date: 'asc' },
@@ -180,14 +181,18 @@ export class EventsService {
               userBadges: { select: { badgeType: true } },
             },
           },
-          attendees: {
-            where: { userId, status: EventRegistrationStatus.ACTIVE }, // SPRINT-38: Exclude cancelled registrations from list attendance state.
-            select: { id: true },
-          },
-          saves: {
-            where: { userId },
-            select: { id: true },
-          },
+          attendees: userId
+            ? {
+                where: { userId, status: EventRegistrationStatus.ACTIVE }, // SPRINT-38: Exclude cancelled registrations from list attendance state.
+                select: { id: true },
+              }
+            : false,
+          saves: userId
+            ? {
+                where: { userId },
+                select: { id: true },
+              }
+            : false,
           eventImages: { orderBy: { order: 'asc' } },
         },
       }),
@@ -200,7 +205,7 @@ export class EventsService {
     return { data, meta: createPaginationMeta(page, limit, total) };
   }
 
-  async getEventById(userId: string, eventId: string) {
+  async getEventById(userId: string | undefined, eventId: string) {
     const event = await this.prisma.event.findUnique({
       where: { id: eventId },
       include: {
@@ -213,21 +218,27 @@ export class EventsService {
             userBadges: { select: { badgeType: true } },
           },
         },
-        attendees: {
-          where: { userId, status: EventRegistrationStatus.ACTIVE }, // SPRINT-38: Exclude cancelled registrations from detail attendance state.
-          select: { id: true },
-        },
-        saves: {
-          where: { userId },
-          select: { id: true },
-        },
+        attendees: userId
+          ? {
+              where: { userId, status: EventRegistrationStatus.ACTIVE }, // SPRINT-38: Exclude cancelled registrations from detail attendance state.
+              select: { id: true },
+            }
+          : false,
+        saves: userId
+          ? {
+              where: { userId },
+              select: { id: true },
+            }
+          : false,
         eventImages: { orderBy: { order: 'asc' } },
-        reviews: {
-          // SPRINT-38: Resolve the caller's own review in the event detail query.
-          where: { userId }, // SPRINT-38: Scope directly to the acting user.
-          select: { id: true }, // SPRINT-38: Fetch only the identifier required by detail UI.
-          take: 1, // SPRINT-38: Bound the relation despite the database compound unique constraint.
-        }, // SPRINT-38: Complete single scoped review relation query.
+        reviews: userId
+          ? {
+              // SPRINT-38: Resolve the caller's own review in the event detail query.
+              where: { userId }, // SPRINT-38: Scope directly to the acting user.
+              select: { id: true }, // SPRINT-38: Fetch only the identifier required by detail UI.
+              take: 1, // SPRINT-38: Bound the relation despite the database compound unique constraint.
+            }
+          : false, // SPRINT-38: Complete single scoped review relation query.
       },
     });
     if (!event) {
@@ -454,8 +465,8 @@ export class EventsService {
     } // SPRINT-38: End event existence check.
     const page = query.page ?? 1; // SPRINT-38: Use standard first-page default.
     const limit = query.limit ?? 20; // SPRINT-38: Use standard review page size.
-    const [items, total] = await this.prisma.$transaction([
-      // SPRINT-38: Read page and count consistently.
+    const [items, total] = await Promise.all([
+      // SPRINT-38: Read page and count in parallel (no transaction needed for reads).
       this.prisma.eventReview.findMany({
         // SPRINT-38: Load the requested review page.
         where: { eventId }, // SPRINT-38: Scope reviews to the event.
@@ -474,7 +485,7 @@ export class EventsService {
         }, // SPRINT-38: Load public reviewer fields.
       }), // SPRINT-38: Complete page query.
       this.prisma.eventReview.count({ where: { eventId } }), // SPRINT-38: Count all reviews for pagination metadata.
-    ]); // SPRINT-38: Complete list transaction.
+    ]); // SPRINT-38: Complete parallel list queries.
     const data = await Promise.all(
       items.map((review) => this.formatEventReview(review)),
     ); // SPRINT-38: Resolve all restaurant-shaped review responses.

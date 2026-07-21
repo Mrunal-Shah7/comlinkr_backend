@@ -23,6 +23,7 @@ import {
 } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler'; // SPRINT-38: Apply a door-appropriate route-specific scanner limit.
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
+import { OptionalAuth } from '../../common/decorators/optional-auth.decorator';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { EventsService } from './events.service';
 import { CreateEventDto } from './dto/create-event.dto';
@@ -71,6 +72,7 @@ export class EventsController {
   }
 
   @Get()
+  @OptionalAuth()
   @ApiOperation({ summary: 'List events with filters' })
   @ApiQuery({ name: 'page', required: false })
   @ApiQuery({ name: 'limit', required: false })
@@ -81,7 +83,7 @@ export class EventsController {
   @ApiQuery({ name: 'upcoming', required: false })
   @ApiResponse({ status: 200, description: 'Paginated events' })
   async getEvents(
-    @CurrentUser('id') userId: string,
+    @CurrentUser('id') userId: string | undefined,
     @Query() query: EventsQueryDto,
   ) {
     return this.eventsService.getEvents(userId, query);
@@ -122,6 +124,7 @@ export class EventsController {
   }
 
   @Get(':id/reviews') // SPRINT-38: List reviews under the event identifier.
+  @OptionalAuth()
   @ApiOperation({ summary: 'Get paginated reviews for an event' }) // SPRINT-38: Document review listing.
   @ApiQuery({ name: 'page', required: false }) // SPRINT-38: Document standard page number.
   @ApiQuery({ name: 'limit', required: false }) // SPRINT-38: Document standard page size.
@@ -243,9 +246,10 @@ export class EventsController {
   } // SPRINT-38: End check-in status route.
 
   @Get(':id')
+  @OptionalAuth()
   @ApiOperation({ summary: 'Get event by ID' })
   async getEventById(
-    @CurrentUser('id') userId: string,
+    @CurrentUser('id') userId: string | undefined,
     @Param('id') id: string,
   ) {
     return this.eventsService.getEventById(userId, id);

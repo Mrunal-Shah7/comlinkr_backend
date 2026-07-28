@@ -219,6 +219,7 @@ export class MessagingService {
 
   /**
    * Prefer exact context (listing/event id). For GENERAL, reuse an existing open DM between the pair.
+   * SPRINT-44: among multiples, evaluate the most recently created conversation only.
    */
   private async findExistingDirectConversation(
     userId: string,
@@ -229,8 +230,7 @@ export class MessagingService {
     const include = this.directConversationInclude();
     const pairWhere = this.buildDirectPairWhere(userId, participantId);
     const orderBy: Prisma.ConversationOrderByWithRelationInput[] = [
-      { lastMessageAt: { sort: 'desc', nulls: 'last' } },
-      { createdAt: 'desc' },
+      { createdAt: 'desc' }, // SPRINT-44: most recently created wins (was lastMessageAt-first)
     ];
 
     const exactWhere: Prisma.ConversationWhereInput = {
@@ -281,6 +281,7 @@ export class MessagingService {
         userId: string;
         status: string;
         lastReadAt: Date | null;
+        isHidden?: boolean; // SPRINT-44: needed to clear delete-chat hide on re-open
       }>;
     } & Record<string, unknown>,
   ): Promise<ConversationResponse> {
@@ -288,6 +289,15 @@ export class MessagingService {
     if (myMember?.status === 'BLOCKED') {
       throw new ForbiddenException('Not allowed to access this conversation.');
     }
+    // SPRINT-44: distinct from unblock — clear requester's own delete-chat hide so the thread reappears
+    if (myMember && (myMember as { isHidden?: boolean }).isHidden === true) {
+      // SPRINT-44: only the requester's row; never clear the other participant's hide
+      await this.prisma.conversationMember.updateMany({
+        // SPRINT-44
+        where: { conversationId: conv.id, userId }, // SPRINT-44
+        data: { isHidden: false }, // SPRINT-44
+      }); // SPRINT-44
+    } // SPRINT-44
     const unreadCount = await this.prisma.message.count({
       where: {
         conversationId: conv.id,
@@ -674,7 +684,14 @@ export class MessagingService {
       contextId,
     );
     if (existingDirect) {
-      return this.returnExistingDirectConversation(userId, existingDirect);
+      // SPRINT-44: classify most-recent existing direct against requester's own member row
+      const myMember = existingDirect.members.find((m) => m.userId === userId); // SPRINT-44
+      if (myMember?.status === 'BLOCKED') {
+        // SPRINT-44: retired / unusable to requester — fall through and create a brand-new conversation
+      } else {
+        // SPRINT-44: usable — return existing (and clear requester hide in returnExistingDirectConversation)
+        return this.returnExistingDirectConversation(userId, existingDirect);
+      } // SPRINT-44
     }
 
     try {
@@ -716,7 +733,12 @@ export class MessagingService {
           contextId,
         );
         if (again) {
-          return this.returnExistingDirectConversation(userId, again);
+          // SPRINT-44: same classification on race-retry path
+          const myMember = again.members.find((m) => m.userId === userId); // SPRINT-44
+          if (myMember?.status !== 'BLOCKED') {
+            // SPRINT-44: only return when usable
+            return this.returnExistingDirectConversation(userId, again);
+          } // SPRINT-44: if still blocked, rethrow / do not latch onto retired thread
         }
       }
       throw e;

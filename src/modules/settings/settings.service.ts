@@ -191,7 +191,10 @@ export class SettingsService {
         if (otherInConv) {
           await tx.conversationMember.updateMany({
             where: { conversationId: m.conversationId, userId },
-            data: { status: 'BLOCKED' },
+            data: {
+              status: 'BLOCKED',
+              blockedByUserBlock: true, // SPRINT-44: record that BLOCKED came from user-block, not decline
+            }, // SPRINT-44: same row as before; provenance only
           });
         }
       }
@@ -203,6 +206,60 @@ export class SettingsService {
     const deleted = await this.prisma.blockedUser.deleteMany({
       where: { blockerId: userId, blockedId: targetUserId },
     });
+    // SPRINT-44: retire stale direct conversations only when a BlockedUser row was actually removed
+    if (deleted.count > 0) {
+      // SPRINT-44: find DIRECT conversations where both users are members
+      const sharedDirect = await this.prisma.conversation.findMany({
+        // SPRINT-44: pair lookup for retirement candidates
+        where: {
+          // SPRINT-44
+          type: 'DIRECT', // SPRINT-44: never touch group conversations
+          AND: [
+            // SPRINT-44
+            { members: { some: { userId } } }, // SPRINT-44: unblocker is a member
+            { members: { some: { userId: targetUserId } } }, // SPRINT-44: target is a member
+          ], // SPRINT-44
+        }, // SPRINT-44
+        include: {
+          // SPRINT-44
+          members: {
+            // SPRINT-44
+            select: { id: true, userId: true, status: true, blockedByUserBlock: true }, // SPRINT-44: need unblocker status + provenance
+          }, // SPRINT-44
+        }, // SPRINT-44
+      }); // SPRINT-44
+
+      const toRetire = sharedDirect.filter((c) => {
+        // SPRINT-44: narrow to user-block provenance on unblocker's own row only
+        const mine = c.members.find((m) => m.userId === userId); // SPRINT-44
+        return (
+          // SPRINT-44
+          mine?.status === 'BLOCKED' && // SPRINT-44: status alone is insufficient
+          mine.blockedByUserBlock === true // SPRINT-44: excludes declined message/roommate requests
+        ); // SPRINT-44
+      }); // SPRINT-44
+
+      // SPRINT-44: one transaction covering all retirements — atomic hide + clear provenance; no status writes
+      if (toRetire.length > 0) {
+        // SPRINT-44
+        await this.prisma.$transaction(async (tx) => {
+          // SPRINT-44
+          for (const conv of toRetire) {
+            // SPRINT-44
+            await tx.conversationMember.updateMany({
+              // SPRINT-44: hide every member so neither party keeps messaging a dead thread
+              where: { conversationId: conv.id }, // SPRINT-44
+              data: { isHidden: true }, // SPRINT-44: visibility only; status untouched
+            }); // SPRINT-44
+            await tx.conversationMember.updateMany({
+              // SPRINT-44: clear provenance on unblocker's row only
+              where: { conversationId: conv.id, userId }, // SPRINT-44
+              data: { blockedByUserBlock: false }, // SPRINT-44: block no longer exists; status stays BLOCKED
+            }); // SPRINT-44
+          } // SPRINT-44
+        }); // SPRINT-44
+      } // SPRINT-44
+    } // SPRINT-44
     return {
       message: deleted.count ? 'User unblocked' : 'User was not blocked',
     };

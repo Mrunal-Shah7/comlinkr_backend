@@ -700,16 +700,33 @@ export class RoommatesService {
     }
 
     const memberIds = [userId, roommateId].sort();
-    const directConversations = await this.prisma.conversation.findMany({
-      where: { type: ConversationType.DIRECT },
-      include: { members: { select: { userId: true } } },
-    });
-    const existingConv = directConversations.find((c) => {
-      const ids = c.members.map((m) => m.userId).sort();
-      return (
-        ids.length === 2 && ids[0] === memberIds[0] && ids[1] === memberIds[1]
-      );
-    });
+    // SPRINT-44: previously scanned all DIRECT with no orderBy — arbitrary match; now most recently created for the pair
+    const pairConversations = await this.prisma.conversation.findMany({
+      // SPRINT-44
+      where: {
+        // SPRINT-44
+        type: ConversationType.DIRECT, // SPRINT-44
+        AND: [
+          // SPRINT-44
+          { members: { some: { userId } } }, // SPRINT-44
+          { members: { some: { userId: roommateId } } }, // SPRINT-44
+        ], // SPRINT-44
+      }, // SPRINT-44
+      include: {
+        members: { select: { userId: true, status: true } }, // SPRINT-44: need status to skip retired blocker rows
+      }, // SPRINT-44
+      orderBy: { createdAt: 'desc' }, // SPRINT-44: most recently created
+    }); // SPRINT-44
+    const existingConv =
+      pairConversations.find((c) => {
+        // SPRINT-44
+        if (c.members.length !== 2) return false; // SPRINT-44
+        const ids = c.members.map((m) => m.userId).sort(); // SPRINT-44
+        if (ids[0] !== memberIds[0] || ids[1] !== memberIds[1]) return false; // SPRINT-44
+        const mine = c.members.find((m) => m.userId === userId); // SPRINT-44
+        // SPRINT-44: if initiator's row is BLOCKED (retired), allow creating a fresh connection conversation
+        return mine?.status !== 'BLOCKED'; // SPRINT-44
+      }) ?? null; // SPRINT-44
     if (existingConv) {
       return {
         message: 'Conversation already exists',

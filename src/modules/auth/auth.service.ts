@@ -10,6 +10,8 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
 import { OtpService } from './otp.service';
+import { StorageService } from '../storage/storage.service'; // SPRINT-47: StorageModule is global — no AuthModule wiring change
+import { resolveMediaUrl } from '../../common/utils/media-url'; // SPRINT-47: route session avatar through the shared resolver
 import { AuthProviderType } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 import { OAuth2Client } from 'google-auth-library';
@@ -85,6 +87,7 @@ export class AuthService {
     private readonly redis: RedisService,
     private readonly otpService: OtpService,
     private readonly configService: ConfigService,
+    private readonly storageService: StorageService, // SPRINT-47: resolve session avatar through the shared media URL helper
   ) {
     this.googleClient = new OAuth2Client(); // SPRINT-34: verification receives every valid audience per request
     const appleAudiences = this.getAppleVerifyAudiences(); // SPRINT-34: resolve the production-safe Apple audience list once for startup diagnostics
@@ -252,7 +255,10 @@ export class AuthService {
       email: user.email,
       username: user.username,
       name: user.fullName,
-      avatarUrl: user.avatarUrl ?? null,
+      avatarUrl: resolveMediaUrl( // SPRINT-47: only this field — resolve stored media the same way every other formatter does
+        user.avatarUrl, // SPRINT-47: pass the raw column value
+        this.storageService.getPublicBaseUrl(), // SPRINT-47: join relative keys to the configured public base
+      ), // SPRINT-47: absolute https, explicit null, or a correctly-prefixed relative API path — never an empty string
       bio: user.bio,
       phoneNumber: user.phoneNumber,
       role: user.role,

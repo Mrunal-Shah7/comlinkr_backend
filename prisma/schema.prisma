@@ -936,6 +936,7 @@ model ConversationMember {
   lastReadAt     DateTime?
   isHidden       Boolean                 @default(false) // SPRINT-27: per-user soft hide from inbox
   blockedByUserBlock Boolean             @default(false) // SPRINT-44: provenance — BLOCKED status set by user-block action (not decline)
+  isMuted        Boolean                 @default(false) // SPRINT-45: this member's own mute of this conversation (suppresses push + bell badge only)
   joinedAt       DateTime                @default(now())
 
   conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)

@@ -13,6 +13,7 @@ import {
   PaginationDto,
   createPaginationMeta,
 } from '../../common/dto/pagination.dto';
+import { resolveMediaUrl } from '../../common/utils/media-url'; // SPRINT-46: the one shared media URL resolver
 
 const STORY_MEDIA_MAX_SIZE = 50 * 1024 * 1024;
 const STORY_EXPIRY_HOURS = 24;
@@ -31,10 +32,9 @@ export class StoriesService {
     private readonly storageService: StorageService,
   ) {}
 
+  // SPRINT-46: route every media value through the shared resolver
   private buildFileUrl(stored: string | null | undefined): string | null {
-    if (!stored) return null;
-    if (stored.startsWith('http')) return stored;
-    return this.storageService.resolvePublicUrl(stored);
+    return resolveMediaUrl(stored, this.storageService.getPublicBaseUrl()); // SPRINT-46: absolute secure URL, or explicit null
   }
 
   /** @param isSaved — from batch `StorySave` lookup (never infer from `story.saves` here). */

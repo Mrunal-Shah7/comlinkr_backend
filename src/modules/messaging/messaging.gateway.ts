@@ -38,6 +38,19 @@ export interface ConversationUpdatedPayload {
   updatedAt: string; // SPRINT-36: provide the ordering timestamp
 } // SPRINT-36: complete conversation update payload
 
+export interface NotificationCreatedPayload {
+  // SPRINT-45: define the bell-badge event contract consumed by mobile
+  id: string; // SPRINT-45: the created notification's identifier
+  type: string; // SPRINT-45: the notification type
+  title: string; // SPRINT-45: the stored title, identical to the push title
+  body: string; // SPRINT-45: the stored body, identical to the push body
+  referenceType: string | null; // SPRINT-45: deep-link reference kind
+  referenceId: string | null; // SPRINT-45: deep-link reference identifier
+  isRead: boolean; // SPRINT-45: read state at creation time
+  createdAt: string; // SPRINT-45: ISO creation timestamp
+  unreadCount: number; // SPRINT-45: server-computed total; the client must never increment locally
+} // SPRINT-45: complete notification-created payload
+
 @WebSocketGateway({
   namespace: '/chat',
   cors: {
@@ -192,6 +205,17 @@ export class MessagingGateway
       .to(userRoomName(userId)) // SPRINT-36: use the shared personal-room helper
       .emit('conversation_updated', payload); // SPRINT-36: emit the documented list-level event
   } // SPRINT-36: complete conversation-list emission
+
+  emitNotificationCreated(
+    // SPRINT-45: deliver a newly created notification to the recipient's bell badge in real time
+    userId: string, // SPRINT-45: identify the recipient's personal room
+    payload: NotificationCreatedPayload, // SPRINT-45: carry the notification and the server-computed unread count
+  ): void {
+    // SPRINT-45: complete notification emission signature
+    this.server // SPRINT-45: target the namespace broadcaster
+      .to(userRoomName(userId)) // SPRINT-45: build the room through the shared Sprint 36 helper, never inline
+      .emit('notification_created', payload); // SPRINT-45: distinct from new_message and conversation_updated
+  } // SPRINT-45: complete bell-badge emission
 
   async joinConversation(
     socketId: string,

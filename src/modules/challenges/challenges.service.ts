@@ -9,6 +9,8 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { createPaginationMeta } from '../../common/dto/pagination.dto';
 import { CreateChallengeDto } from './dto/create-challenge.dto';
 import { ChallengesQueryDto } from './dto/challenges-query.dto';
+import { resolveMediaUrl } from '../../common/utils/media-url'; // SPRINT-46: the one shared media URL resolver
+import { StorageService } from '../storage/storage.service'; // SPRINT-46: source of the configured public delivery base
 
 const DURATION_DAYS: Record<ChallengeDuration, number> = {
   ONE_DAY: 1,
@@ -20,10 +22,14 @@ const DURATION_DAYS: Record<ChallengeDuration, number> = {
 
 @Injectable()
 export class ChallengesService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly storageService: StorageService, // SPRINT-46: supply the configured public delivery base
+  ) {}
 
-  private buildFileUrl(url: string): string {
-    return url;
+  // SPRINT-46: route every media value through the shared resolver instead of returning it raw
+  private buildFileUrl(url: string | null | undefined): string | null {
+    return resolveMediaUrl(url, this.storageService.getPublicBaseUrl()); // SPRINT-46: absolute secure URL, or explicit null
   }
 
   private computeEndDate(startsAt: Date, duration: ChallengeDuration): Date {

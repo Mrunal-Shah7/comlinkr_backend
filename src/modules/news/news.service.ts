@@ -19,6 +19,7 @@ import {
   enrichArticlesWithImages,
   type RssNewsArticle,
 } from './google-news-rss.util';
+import { resolveMediaUrl } from '../../common/utils/media-url'; // SPRINT-46: the one shared media URL resolver
 
 export interface NewsExplorePayload {
   data: RssNewsArticle[];
@@ -502,9 +503,10 @@ export class NewsService {
         id: comment.user.id,
         username: comment.user.username,
         name: comment.user.fullName,
-        avatarUrl: comment.user.avatarUrl
-          ? this.storageService.resolvePublicUrl(comment.user.avatarUrl)
-          : null,
+        avatarUrl: resolveMediaUrl(
+          comment.user.avatarUrl,
+          this.storageService.getPublicBaseUrl(),
+        ), // SPRINT-46: use the shared resolver rather than the storage helper's empty-string contract
       },
     };
   }

@@ -20,6 +20,7 @@ import { CreateConversationDto } from './dto/create-conversation.dto';
 import { SendMessageDto } from './dto/send-message.dto';
 import { UpdateMemberStatusDto } from './dto/update-member-status.dto';
 import { ConversationsQueryDto } from './dto/conversations-query.dto';
+import { UpdateConversationMuteDto } from './dto/update-conversation-mute.dto'; // SPRINT-45: validated single-boolean mute body
 import { AUDIO_MAX_SIZE_BYTES } from '../storage/storage.service'; // SPRINT-36: share the exact audio upload size ceiling with the interceptor
 
 const MESSAGE_LIMIT = 30;
@@ -169,4 +170,19 @@ export class MessagingController {
   ) {
     return this.messagingService.markAsRead(userId, conversationId);
   }
+
+  // SPRINT-45: single state-carrying mute route (no toggle) — distinct from PATCH /:id/read by suffix
+  @Patch(':id/mute')
+  async setConversationMute(
+    @CurrentUser('id') userId: string, // SPRINT-45: only the authenticated caller's own row is written
+    @Param('id') conversationId: string, // SPRINT-45: target conversation from the path
+    @Body() dto: UpdateConversationMuteDto, // SPRINT-45: validated body carrying the desired state
+  ) {
+    // SPRINT-45: complete mute endpoint signature
+    return this.messagingService.setConversationMute(
+      userId,
+      conversationId,
+      dto.isMuted,
+    ); // SPRINT-45: delegate to the idempotent service method
+  } // SPRINT-45: complete mute endpoint
 }

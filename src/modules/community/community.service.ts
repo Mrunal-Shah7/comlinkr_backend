@@ -12,13 +12,19 @@ import {
   PaginationDto,
   createPaginationMeta,
 } from '../../common/dto/pagination.dto';
+import { resolveMediaUrl } from '../../common/utils/media-url'; // SPRINT-46: the one shared media URL resolver
+import { StorageService } from '../storage/storage.service'; // SPRINT-46: source of the configured public delivery base
 
 @Injectable()
 export class CommunityService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly storageService: StorageService, // SPRINT-46: supply the configured public delivery base
+  ) {}
 
-  private buildAvatarUrl(avatarUrl: string | null): string | null {
-    return avatarUrl ?? null;
+  // SPRINT-46: route every media value through the shared resolver instead of returning it raw
+  private buildAvatarUrl(avatarUrl: string | null | undefined): string | null {
+    return resolveMediaUrl(avatarUrl, this.storageService.getPublicBaseUrl()); // SPRINT-46: absolute secure URL, or explicit null
   }
 
   private async getUserCity(userId?: string): Promise<string | null> {

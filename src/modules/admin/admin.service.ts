@@ -382,15 +382,9 @@ export class AdminService {
       referenceType: 'ADMIN_WARN',
       referenceId: adminUserId,
     });
-    try {
-      await this.expoNotificationService.sendToUsers(
-        [userId],
-        'Account warning',
-        message,
-      );
-    } catch {
-      // Push delivery is best-effort; in-app notification is already stored.
-    }
+    // SPRINT-45: the explicit push here is removed — createNotification now sends it, so an
+    // admin warning produces exactly one push. Consequence: warning pushes now respect the
+    // recipient's pushEnabled toggle, where previously they were unconditional.
     return { message: 'Warning sent' };
   }
 

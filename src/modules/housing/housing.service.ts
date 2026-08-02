@@ -16,6 +16,7 @@ import {
   PaginationDto,
   createPaginationMeta,
 } from '../../common/dto/pagination.dto';
+import { resolveMediaUrl } from '../../common/utils/media-url'; // SPRINT-46: the one shared media URL resolver
 
 export const LISTING_IMAGE_MAX = 6; // SPRINT-37: share one maximum between controller interception and service capacity checks
 const LISTING_IMAGE_MAX_SIZE = 5 * 1024 * 1024;
@@ -30,8 +31,9 @@ export class HousingService {
     private readonly storageService: StorageService,
   ) {}
 
-  private buildFileUrl(imageUrl: string): string {
-    return imageUrl;
+  // SPRINT-46: route every media value through the shared resolver instead of returning it raw
+  private buildFileUrl(imageUrl: string | null | undefined): string | null {
+    return resolveMediaUrl(imageUrl, this.storageService.getPublicBaseUrl()); // SPRINT-46: absolute secure URL, or explicit null
   }
 
   private formatImages(

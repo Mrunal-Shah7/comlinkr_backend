@@ -26,6 +26,7 @@ import {
   EventCheckInFilter,
   EventCheckInStatusDto,
 } from './dto/event-checkin-status.dto'; // SPRINT-38: Type organiser status filtering and pagination.
+import { resolveMediaUrl } from '../../common/utils/media-url'; // SPRINT-46: the one shared media URL resolver
 
 const EVENT_IMAGE_MAX = 6;
 const EVENT_IMAGE_MAX_SIZE = 5 * 1024 * 1024;
@@ -40,11 +41,13 @@ export class EventsService {
   ) {}
 
   /** Readable URL for clients (presigned when bucket objects are private). */
+  // SPRINT-46: route every media value through the shared resolver instead of the storage helper's empty-string contract
   private async buildFileUrl(
     imageUrl: string | null | undefined,
-  ): Promise<string> {
-    if (imageUrl == null || imageUrl === '') return '';
-    return this.storageService.getReadUrlForClient(imageUrl);
+  ): Promise<string | null> {
+    return Promise.resolve(
+      resolveMediaUrl(imageUrl, this.storageService.getPublicBaseUrl()), // SPRINT-46: absolute secure URL, or explicit null
+    );
   }
 
   private async getUserCity(userId?: string): Promise<string | null> {
@@ -75,7 +78,7 @@ export class EventsService {
           this.buildFileUrl(row.imageUrl),
         ),
       )
-    ).filter((u) => u.length > 0);
+    ).filter((u): u is string => u != null && u.length > 0); // SPRINT-46: drop resolver nulls instead of empty strings
     return {
       id: event.id,
       title: event.title,
@@ -714,7 +717,7 @@ export class EventsService {
       });
       results.push({
         id: img.id,
-        url: await this.buildFileUrl(imageUrl),
+        url: (await this.buildFileUrl(imageUrl)) ?? imageUrl, // SPRINT-46: upload response keeps a non-null url; fall back to the value just stored
         order: img.order,
       });
     }
@@ -734,18 +737,13 @@ export class EventsService {
       },
       select: { userId: true },
     });
-    await Promise.all(
-      usersInCity.map((loc) =>
-        this.notificationsService.createNotification({
-          userId: loc.userId,
-          type: 'EVENT_NEARBY',
-          title: 'New event in your area',
-          body: `"${eventTitle}" is happening in ${city}`,
-          referenceType: 'EVENT',
-          referenceId: eventId,
-        }),
-      ),
-    );
+    // SPRINT-47: one batched fan-out instead of N createNotification → N concurrent Expo calls + N count queries racing the pool
+    await this.notificationsService.createEventNearbyFanout({
+      userIds: usersInCity.map((loc) => loc.userId), // SPRINT-47: recipient query unchanged — only the dispatch shape changes
+      eventId, // SPRINT-47: EVENT reference — mute gate does not apply
+      title: 'New event in your area', // SPRINT-47: preserve exact title string
+      body: `"${eventTitle}" is happening in ${city}`, // SPRINT-47: preserve exact body string
+    }); // SPRINT-47: rows + one batched push + socket emissions
   }
 
   async attendEvent(userId: string, eventId: string, dto: AttendEventDto = {}) {

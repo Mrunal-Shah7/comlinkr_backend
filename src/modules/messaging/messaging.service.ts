@@ -7,7 +7,6 @@ import {
 import { randomUUID } from 'crypto';
 import { ModuleRef } from '@nestjs/core';
 import { NotificationsService } from '../notifications/notifications.service';
-import { ExpoNotificationService } from '../notifications/expo-notification.service'; // SPRINT-36: restore actual offline push delivery alongside in-app notifications
 import {
   ConversationContextType,
   ConversationMemberStatus,
@@ -21,6 +20,7 @@ import type { SendMessageDto } from './dto/send-message.dto';
 import type { UpdateMemberStatusDto } from './dto/update-member-status.dto';
 import type { ConversationsQueryDto } from './dto/conversations-query.dto';
 import { sanitizeInput } from '../../common/utils/sanitize';
+import { resolveMediaUrl } from '../../common/utils/media-url'; // SPRINT-46: the one shared media URL resolver
 
 const MESSAGE_PAGE_LIMIT = 30;
 const IMAGE_MIME_TYPES = ['image/jpeg', 'image/png', 'image/gif'];
@@ -74,6 +74,7 @@ export interface ConversationResponse {
   lastMessage: LastMessageResponse | null;
   unreadCount: number;
   contextLabel: string | null;
+  isMuted: boolean; // SPRINT-45: the calling user's own mute state, so a client renders the correct label without a second request
 }
 
 export interface MessageSenderResponse {
@@ -101,8 +102,7 @@ export class MessagingService {
     private readonly prisma: PrismaService,
     private readonly fileService: StorageService,
     private readonly moduleRef: ModuleRef,
-    private readonly notificationsService: NotificationsService,
-    private readonly expoNotificationService: ExpoNotificationService, // SPRINT-36: send message pushes independently of socket presence
+    private readonly notificationsService: NotificationsService, // SPRINT-45: sole owner of message push and bell-badge delivery
   ) {}
 
   private getGateway(): {
@@ -333,6 +333,7 @@ export class MessagingService {
         userId: string;
         role: string;
         status: string;
+        isMuted?: boolean; // SPRINT-45: read the caller's own mute flag from the already-included member rows
         user: {
           id: string;
           username: string;
@@ -361,7 +362,10 @@ export class MessagingService {
         userId: m.user.id,
         username: m.user.username,
         name: m.user.fullName,
-        avatarUrl: m.user.avatarUrl ?? null,
+        avatarUrl: resolveMediaUrl(
+          m.user.avatarUrl,
+          this.fileService.getPublicBaseUrl(),
+        ), // SPRINT-46: nested member avatar was returned raw
         role: m.role,
         status: m.status,
         isOnline: await this.isUserOnlineRespectingPrivacy(m.user.id),
@@ -392,7 +396,10 @@ export class MessagingService {
             id: otherMember.user.id,
             username: otherMember.user.username,
             name: otherMember.user.fullName,
-            avatarUrl: otherMember.user.avatarUrl ?? null,
+            avatarUrl: resolveMediaUrl(
+              otherMember.user.avatarUrl,
+              this.fileService.getPublicBaseUrl(),
+            ), // SPRINT-46: nested otherUser avatar was returned raw
             isOnline: await this.isUserOnlineRespectingPrivacy(
               otherMember.user.id,
             ),
@@ -416,6 +423,9 @@ export class MessagingService {
         raw.contextId,
         listingTitleMap,
       ),
+      // SPRINT-45: select the caller's own member row explicitly rather than relying on member ordering
+      isMuted:
+        raw.members.find((m) => m.userId === currentUserId)?.isMuted ?? false, // SPRINT-45: never expose the other participant's mute state
     };
   }
 
@@ -447,12 +457,15 @@ export class MessagingService {
         id: raw.sender.id,
         username: raw.sender.username,
         name: raw.sender.fullName,
-        avatarUrl: raw.sender.avatarUrl ?? null,
+        avatarUrl: resolveMediaUrl(
+          raw.sender.avatarUrl,
+          this.fileService.getPublicBaseUrl(),
+        ), // SPRINT-46: nested message sender avatar was returned raw
       },
       // SPRINT-36: reuse the existing attachment URL field for both image and audio messages
       imageUrl:
         raw.type === 'IMAGE' || raw.type === 'AUDIO' // SPRINT-36: expose stored URL for supported attachment message types
-          ? (raw.imageUrl ?? null) // SPRINT-36: preserve the existing field name and null behavior
+          ? resolveMediaUrl(raw.imageUrl, this.fileService.getPublicBaseUrl()) // SPRINT-46: message attachment was returned raw
           : null, // SPRINT-36: do not expose attachment URLs for plain messages
       durationSeconds: raw.durationSeconds ?? null, // SPRINT-36: include duration in every formatted message response
       isOwn: raw.sender.id === currentUserId,
@@ -959,12 +972,9 @@ export class MessagingService {
         actorId: userId,
       });
     }
-    void this.expoNotificationService.sendToUsers(
-      // SPRINT-36: preserve offline delivery as real push, independent of socket presence
-      otherAcceptedMembers.map((recipient) => recipient.userId), // SPRINT-36: target every accepted recipient
-      `New message from ${senderName}`, // SPRINT-36: match the in-app notification title
-      contentPreview, // SPRINT-36: match the in-app notification body
-    ); // SPRINT-36: do not delay the message response on external push delivery
+    // SPRINT-45: the Sprint 36 push from this path is removed — NotificationsService.createNotification
+    // is now the single owner of message push delivery, so one message produces exactly one push.
+    // Delivery remains independent of socket presence; only the owner changed.
     return formatted;
   }
 
@@ -1098,4 +1108,26 @@ export class MessagingService {
     });
     return { message: 'Conversation removed' };
   }
+
+  // SPRINT-45: set the calling user's own per-conversation mute state; never the other participant's
+  async setConversationMute(
+    userId: string, // SPRINT-45: the calling user, and the only row this method writes
+    conversationId: string, // SPRINT-45: the conversation whose membership is being muted
+    isMuted: boolean, // SPRINT-45: absolute desired state, so a retried tap cannot diverge
+  ): Promise<{ conversationId: string; isMuted: boolean }> {
+    const member = await this.prisma.conversationMember.findUnique({
+      // SPRINT-45: locate only the caller's membership row
+      where: { conversationId_userId: { conversationId, userId } }, // SPRINT-45: composite key scopes the lookup to the caller
+    }); // SPRINT-45: complete caller membership lookup
+    if (!member) {
+      // SPRINT-45: match the not-found behaviour hideConversation already uses
+      throw new NotFoundException('Conversation not found'); // SPRINT-45: same message as the hide path
+    } // SPRINT-45: complete membership requirement
+    await this.prisma.conversationMember.update({
+      // SPRINT-45: write the caller's own row only
+      where: { conversationId_userId: { conversationId, userId } }, // SPRINT-45: re-scope the write to the caller
+      data: { isMuted }, // SPRINT-45: setting the current value again succeeds rather than erroring
+    }); // SPRINT-45: complete idempotent mute write
+    return { conversationId, isMuted }; // SPRINT-45: confirm the resulting state to the client
+  } // SPRINT-45: complete per-conversation mute method
 }

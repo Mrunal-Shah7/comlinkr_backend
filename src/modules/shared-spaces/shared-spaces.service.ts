@@ -14,6 +14,7 @@ import { CreateSharedSpaceDto } from './dto/create-shared-space.dto';
 import { UpdateSharedSpaceDto } from './dto/update-shared-space.dto';
 import { SharedSpacesQueryDto } from './dto/shared-spaces-query.dto';
 import { createPaginationMeta } from '../../common/dto/pagination.dto';
+import { resolveMediaUrl } from '../../common/utils/media-url'; // SPRINT-46: the one shared media URL resolver
 
 const SPACE_IMAGE_MAX = 6;
 const SPACE_IMAGE_MAX_SIZE = 5 * 1024 * 1024;
@@ -27,11 +28,13 @@ export class SharedSpacesService {
     private readonly notificationsService: NotificationsService,
   ) {}
 
+  // SPRINT-46: route every media value through the shared resolver instead of the storage helper's empty-string contract
   private async buildFileUrl(
     imageUrl: string | null | undefined,
-  ): Promise<string> {
-    if (imageUrl == null || imageUrl === '') return '';
-    return this.storageService.getReadUrlForClient(imageUrl);
+  ): Promise<string | null> {
+    return Promise.resolve(
+      resolveMediaUrl(imageUrl, this.storageService.getPublicBaseUrl()), // SPRINT-46: absolute secure URL, or explicit null
+    );
   }
 
   async formatSharedSpace(
@@ -126,7 +129,9 @@ export class SharedSpacesService {
         avatar: avatarUrl ?? undefined,
         verified: space.isVerified,
       },
-      images: imageRows.map((r) => r.url).filter((u) => u.length > 0),
+      images: imageRows
+        .map((r) => r.url)
+        .filter((u): u is string => u != null && u.length > 0), // SPRINT-46: drop resolver nulls instead of empty strings
       imageRefs: imageRows,
       applicationCount: space._count?.applications ?? 0,
       isSaved,
@@ -427,7 +432,7 @@ export class SharedSpacesService {
       });
       results.push({
         id: img.id,
-        url: await this.buildFileUrl(imageUrl),
+        url: (await this.buildFileUrl(imageUrl)) ?? imageUrl, // SPRINT-46: upload response keeps a non-null url; fall back to the value just stored
         order: img.order,
       });
     }

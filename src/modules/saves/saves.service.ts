@@ -8,6 +8,7 @@ import {
 } from '../../common/dto/pagination.dto';
 import type { SavesQueryDto } from './dto/saves-query.dto';
 import { EventRegistrationStatus } from '@prisma/client'; // SPRINT-38: Exclude retained cancelled registrations from saved-event attendance state.
+import { resolveMediaUrl } from '../../common/utils/media-url'; // SPRINT-46: the one shared media URL resolver
 
 const EARTH_RADIUS_MILES = 3959;
 
@@ -19,15 +20,18 @@ export class SavesService {
     private readonly roommatesService: RoommatesService,
   ) {}
 
-  private buildFileUrl(url: string): string {
-    return url;
+  // SPRINT-46: route every media value through the shared resolver instead of returning it raw
+  private buildFileUrl(url: string | null | undefined): string | null {
+    return resolveMediaUrl(url, this.storageService.getPublicBaseUrl()); // SPRINT-46: absolute secure URL, or explicit null
   }
 
+  // SPRINT-46: route event media through the same shared resolver as every other site
   private async buildEventImageUrl(
     imageUrl: string | null | undefined,
-  ): Promise<string> {
-    if (imageUrl == null || imageUrl === '') return '';
-    return this.storageService.getReadUrlForClient(imageUrl);
+  ): Promise<string | null> {
+    return Promise.resolve(
+      resolveMediaUrl(imageUrl, this.storageService.getPublicBaseUrl()), // SPRINT-46: absolute secure URL, or explicit null
+    );
   }
 
   private computeDistanceMiles(
@@ -250,7 +254,7 @@ export class SavesService {
         id: question.author.id,
         username: question.author.username,
         name: question.author.fullName,
-        avatarUrl: question.author.avatarUrl ?? null,
+        avatarUrl: this.buildFileUrl(question.author.avatarUrl), // SPRINT-46: was returned raw, bypassing every helper
       },
       isUpvoted: upvotedIds.has(question.id),
       isSaved: savedIds.has(question.id),
@@ -307,7 +311,7 @@ export class SavesService {
           this.buildEventImageUrl(row.imageUrl),
         ),
       )
-    ).filter((u) => u.length > 0);
+    ).filter((u): u is string => u != null && u.length > 0); // SPRINT-46: drop resolver nulls instead of empty strings
     return {
       id: event.id,
       title: event.title,

@@ -12,6 +12,7 @@ import { ExpoNotificationService } from '../notifications/expo-notification.serv
 import { UpdateProfileDto } from './dto/update-profile.dto';
 import { CreateSupportTicketDto } from './dto/create-support-ticket.dto';
 import { AchievementDto, UserStatsDto } from './dto/user-response.dto';
+import { resolveMediaUrl } from '../../common/utils/media-url'; // SPRINT-46: the one shared media URL resolver
 
 const AVATAR_MAX_SIZE = 5 * 1024 * 1024;
 const AVATAR_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
@@ -24,8 +25,9 @@ export class UsersService {
     private readonly expoNotificationService: ExpoNotificationService,
   ) {}
 
+  // SPRINT-46: route every media value through the shared resolver instead of returning it raw
   private buildAvatarUrl(avatarUrl: string | null): string | null {
-    return avatarUrl ?? null;
+    return resolveMediaUrl(avatarUrl, this.storageService.getPublicBaseUrl()); // SPRINT-46: absolute secure URL, or explicit null
   }
 
   private async computeStats(userId: string): Promise<UserStatsDto> {

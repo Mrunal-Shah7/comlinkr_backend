@@ -19,6 +19,7 @@ import {
 import { sanitizeInput } from '../../common/utils/sanitize';
 import { NeighborhoodMood, Prisma } from '@prisma/client'; // SPRINT-37: type the constrained owner update payload
 import { VoteNeighborhoodMoodDto } from './dto/vote-neighborhood-mood.dto';
+import { resolveMediaUrl } from '../../common/utils/media-url'; // SPRINT-46: the one shared media URL resolver
 
 const FEED_MEDIA_MAX_FILES = 6;
 const FEED_MEDIA_MAX_SIZE = 5 * 1024 * 1024;
@@ -39,8 +40,9 @@ export class FeedService {
     private readonly notificationsService: NotificationsService,
   ) {}
 
-  private buildFileUrl(imageUrl: string): string {
-    return imageUrl;
+  // SPRINT-46: route every media value through the shared resolver instead of returning it raw
+  private buildFileUrl(imageUrl: string | null | undefined): string | null {
+    return resolveMediaUrl(imageUrl, this.storageService.getPublicBaseUrl()); // SPRINT-46: absolute secure URL, or explicit null
   }
 
   private formatFeedPost(post: any, currentUserId?: string) {
@@ -202,8 +204,7 @@ export class FeedService {
   }
 
   async getFeed(userId: string | undefined, query: FeedQueryDto) {
-    const city =
-      query.city?.trim() || (await this.getUserCity(userId)) || null;
+    const city = query.city?.trim() || (await this.getUserCity(userId)) || null;
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
 

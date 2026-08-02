@@ -22,6 +22,7 @@ import {
 import { MessagingService } from '../messaging/messaging.service';
 import { NotificationsService } from '../notifications/notifications.service'; // SPRINT-29
 import { ReservationStatus } from '@prisma/client'; // SPRINT-29
+import { resolveMediaUrl } from '../../common/utils/media-url'; // SPRINT-46: the one shared media URL resolver
 
 const RESTAURANT_IMAGE_MAX = 6;
 const RESTAURANT_IMAGE_MAX_SIZE = 5 * 1024 * 1024;
@@ -58,8 +59,9 @@ export class FoodService {
     return Math.round(EARTH_RADIUS_MILES * c * 10) / 10;
   }
 
-  private buildFileUrl(imageUrl: string): string {
-    return imageUrl;
+  // SPRINT-46: route every media value through the shared resolver instead of returning it raw
+  private buildFileUrl(imageUrl: string | null | undefined): string | null {
+    return resolveMediaUrl(imageUrl, this.storageService.getPublicBaseUrl()); // SPRINT-46: absolute secure URL, or explicit null
   }
 
   private async getUserLocation(userId?: string): Promise<{
@@ -533,7 +535,7 @@ export class FoodService {
       });
       results.push({
         id: img.id,
-        url: this.buildFileUrl(imageUrl),
+        url: this.buildFileUrl(imageUrl) ?? imageUrl, // SPRINT-46: upload response keeps a non-null url; fall back to the value just stored
         order: img.order,
       });
     }

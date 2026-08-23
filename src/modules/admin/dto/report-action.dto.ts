@@ -1,5 +1,13 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEnum, IsInt, IsOptional, IsString, Max, MaxLength, Min } from 'class-validator';
+import {
+  IsEnum,
+  IsInt,
+  IsOptional,
+  IsString,
+  Max,
+  MaxLength,
+  Min,
+} from 'class-validator';
 
 // SPRINT-51: action vocabulary for POST /admin/reports/:id/action
 export enum AdminReportAction {
@@ -22,7 +30,9 @@ export class ReportActionDto {
   @MaxLength(2000)
   reason?: string;
 
-  @ApiPropertyOptional({ description: 'Required for SUSPEND; duration in days' })
+  @ApiPropertyOptional({
+    description: 'Required for SUSPEND; duration in days',
+  })
   @IsOptional()
   @IsInt()
   @Min(1)

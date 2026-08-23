@@ -154,10 +154,12 @@ export class RoommatesController {
   @ApiResponse({ status: 200, description: 'Request cancelled' }) // SPRINT-33: success response doc
   @ApiResponse({ status: 400, description: 'No outgoing request to cancel' }) // SPRINT-33: invalid-state response doc
   @ApiResponse({ status: 404, description: 'User not found' }) // SPRINT-33: missing target response doc
-  async cancelConnectionRequest( // SPRINT-33: controller handler for POST /:id/cancel
+  async cancelConnectionRequest(
+    // SPRINT-33: controller handler for POST /:id/cancel
     @CurrentUser('id') userId: string, // SPRINT-33: authenticated sender id
     @Param('id') id: string, // SPRINT-33: target recipient id
-  ) { // SPRINT-33
+  ) {
+    // SPRINT-33
     return this.roommatesService.cancelConnectionRequest(userId, id); // SPRINT-33: delegate to service cancellation logic
   } // SPRINT-33
 

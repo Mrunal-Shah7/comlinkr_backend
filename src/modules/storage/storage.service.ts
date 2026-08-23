@@ -47,12 +47,12 @@ function audioMagicMatches(buffer: Buffer, mimeType: string): boolean {
     return (
       // SPRINT-36: accept either valid common MPEG prefix
       (buffer[0] === 0x49 && buffer[1] === 0x44 && buffer[2] === 0x33) || // SPRINT-36: match ID3
-      (buffer[0] === 0xff && (buffer[1]! & 0xe0) === 0xe0) // SPRINT-36: match MPEG frame synchronization
+      (buffer[0] === 0xff && (buffer[1] & 0xe0) === 0xe0) // SPRINT-36: match MPEG frame synchronization
     ); // SPRINT-36: complete MPEG signature check
   } // SPRINT-36: complete MPEG branch
   if (mimeType === 'audio/aac') {
     // SPRINT-36: recognize raw ADTS AAC
-    return buffer[0] === 0xff && (buffer[1]! & 0xf6) === 0xf0; // SPRINT-36: match the ADTS synchronization bits
+    return buffer[0] === 0xff && (buffer[1] & 0xf6) === 0xf0; // SPRINT-36: match the ADTS synchronization bits
   } // SPRINT-36: complete AAC branch
   if (mimeType === 'audio/ogg') {
     // SPRINT-36: recognize Ogg containers

@@ -1246,9 +1246,7 @@ export class MessagingService {
         : null;
 
     const ordered = page.reverse();
-    const data = ordered.map((m) =>
-      this.formatMessage(m as any, m.senderId),
-    );
+    const data = ordered.map((m) => this.formatMessage(m as any, m.senderId));
     return { data, nextCursor };
   }
 

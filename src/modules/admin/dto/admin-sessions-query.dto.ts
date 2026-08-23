@@ -1,7 +1,8 @@
 import { Type } from 'class-transformer'; // SPRINT-35: transform numeric session pagination query values
 import { IsInt, IsOptional, IsUUID, Max, Min } from 'class-validator'; // SPRINT-35: validate session pagination and optional user filter
 
-export class AdminSessionsQueryDto { // SPRINT-35: define the admin session-list query contract
+export class AdminSessionsQueryDto {
+  // SPRINT-35: define the admin session-list query contract
   @IsOptional() // SPRINT-35: default to the first page when omitted
   @Type(() => Number) // SPRINT-35: convert the HTTP query string to a number
   @IsInt() // SPRINT-35: reject fractional or malformed pages

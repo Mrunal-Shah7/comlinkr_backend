@@ -718,7 +718,9 @@ export class RoommatesService {
         ], // SPRINT-44
       }, // SPRINT-44
       include: {
-        members: { select: { userId: true, status: true, blockProvenance: true } }, // SPRINT-53: need provenance to refuse ADMIN_BAN bypass
+        members: {
+          select: { userId: true, status: true, blockProvenance: true },
+        }, // SPRINT-53: need provenance to refuse ADMIN_BAN bypass
       }, // SPRINT-44
       orderBy: { createdAt: 'desc' }, // SPRINT-44: most recently created
     }); // SPRINT-44
@@ -730,7 +732,10 @@ export class RoommatesService {
         if (ids[0] !== memberIds[0] || ids[1] !== memberIds[1]) return false; // SPRINT-44
         const mine = c.members.find((m) => m.userId === userId); // SPRINT-44
         // SPRINT-53: ADMIN_BAN must not be treated as a skippable retired row
-        if (mine?.status === 'BLOCKED' && mine.blockProvenance === 'ADMIN_BAN') {
+        if (
+          mine?.status === 'BLOCKED' &&
+          mine.blockProvenance === 'ADMIN_BAN'
+        ) {
           return true; // SPRINT-53: keep this conversation — do not create a fresh one
         }
         // SPRINT-44: if initiator's row is BLOCKED (retired user-block), allow creating a fresh connection conversation

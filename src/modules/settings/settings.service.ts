@@ -27,7 +27,8 @@ const BCRYPT_ROUNDS = 12;
 export class SettingsService {
   private readonly logger = new Logger(SettingsService.name); // SPRINT-32: immediate delete diagnostics
 
-  constructor( // SPRINT-34: inject the exported auth service for pre-delete Apple revocation
+  constructor(
+    // SPRINT-34: inject the exported auth service for pre-delete Apple revocation
     private readonly prisma: PrismaService, // SPRINT-34: preserve existing database access
     private readonly authService: AuthService, // SPRINT-34: invoke non-blocking Apple authorization revocation
   ) {} // SPRINT-34: complete settings dependencies
@@ -225,7 +226,12 @@ export class SettingsService {
           // SPRINT-44
           members: {
             // SPRINT-44
-            select: { id: true, userId: true, status: true, blockProvenance: true }, // SPRINT-53: was blockedByUserBlock
+            select: {
+              id: true,
+              userId: true,
+              status: true,
+              blockProvenance: true,
+            }, // SPRINT-53: was blockedByUserBlock
           }, // SPRINT-44
         }, // SPRINT-44
       }); // SPRINT-44
@@ -566,7 +572,9 @@ export class SettingsService {
         await tx.eventAttendee.deleteMany({
           where: { eventId: { in: eventIds } },
         });
-        await tx.eventImage.deleteMany({ where: { eventId: { in: eventIds } } });
+        await tx.eventImage.deleteMany({
+          where: { eventId: { in: eventIds } },
+        });
       }
       await tx.eventSave.deleteMany({ where: { userId } });
       await tx.eventAttendee.deleteMany({ where: { userId } });
@@ -579,7 +587,9 @@ export class SettingsService {
         })
       ).map((s) => s.id);
       if (storyIds.length) {
-        await tx.storyComment.deleteMany({ where: { storyId: { in: storyIds } } });
+        await tx.storyComment.deleteMany({
+          where: { storyId: { in: storyIds } },
+        });
         await tx.storyLike.deleteMany({ where: { storyId: { in: storyIds } } });
         await tx.storySave.deleteMany({ where: { storyId: { in: storyIds } } });
       }
@@ -627,7 +637,9 @@ export class SettingsService {
       });
       await tx.pushToken.deleteMany({ where: { userId } });
       await tx.pushDevice.deleteMany({ where: { userId } });
-      await tx.broadcastNotification.deleteMany({ where: { sentById: userId } });
+      await tx.broadcastNotification.deleteMany({
+        where: { sentById: userId },
+      });
       await tx.supportTicket.deleteMany({ where: { userId } });
       await tx.adminPollVote.deleteMany({ where: { userId } });
       const adminPollIds = (

@@ -1,5 +1,6 @@
 import { Type } from 'class-transformer'; // SPRINT-34: transform an optional structured Apple name for nested validation
-import { // SPRINT-34: validate flat and structured Apple request fields
+import {
+  // SPRINT-34: validate flat and structured Apple request fields
   IsNotEmpty, // SPRINT-34: preserve required identity-token validation
   IsOptional, // SPRINT-34: keep name and authorization code backward-compatible
   IsString, // SPRINT-34: constrain every supplied text field
@@ -8,7 +9,8 @@ import { // SPRINT-34: validate flat and structured Apple request fields
 } from 'class-validator'; // SPRINT-34: complete Apple DTO validator imports
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
-export class AppleStructuredNameDto { // SPRINT-34: accept null-safe given and family name parts when a client sends them
+export class AppleStructuredNameDto {
+  // SPRINT-34: accept null-safe given and family name parts when a client sends them
   @ApiPropertyOptional() // SPRINT-34: document the optional Apple given name
   @IsOptional() // SPRINT-34: Apple may omit the given name
   @IsString() // SPRINT-34: reject non-string given names
@@ -42,7 +44,8 @@ export class AppleAuthDto {
   @Type(() => AppleStructuredNameDto) // SPRINT-34: instantiate nested name data for validation
   name?: AppleStructuredNameDto; // SPRINT-34: support the structured-name fallback chain
 
-  @ApiPropertyOptional({ // SPRINT-34: document Apple's short-lived native authorization code
+  @ApiPropertyOptional({
+    // SPRINT-34: document Apple's short-lived native authorization code
     description: 'Apple authorization code used to obtain a revocation token', // SPRINT-34: explain the optional revocation contract
   }) // SPRINT-34: close authorization-code Swagger metadata
   @IsOptional() // SPRINT-34: remain compatible with mobile builds that do not send the code

@@ -91,9 +91,7 @@ export class AdminCronService {
     }
 
     if (lifted > 0) {
-      this.logger.log(
-        `Suspension expiry: lifted ${lifted} ban record(s).`,
-      );
+      this.logger.log(`Suspension expiry: lifted ${lifted} ban record(s).`);
     }
   }
 }

@@ -9,7 +9,10 @@ export type AdminAuditRouteMeta = {
   targetType: string;
 };
 
-export const ADMIN_MUTATING_ROUTE_CATALOGUE: Record<string, AdminAuditRouteMeta> = {
+export const ADMIN_MUTATING_ROUTE_CATALOGUE: Record<
+  string,
+  AdminAuditRouteMeta
+> = {
   // SPRINT-52: reports
   'POST /admin/reports/:id/action': {
     targetParam: 'id',

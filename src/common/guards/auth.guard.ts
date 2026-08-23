@@ -59,7 +59,7 @@ export class AuthGuard implements CanActivate {
     session?: { userId?: string };
     user?: unknown;
   }): Promise<boolean> {
-    const userId = request.session?.userId as string | undefined;
+    const userId = request.session?.userId;
     if (!userId) {
       return false;
     }

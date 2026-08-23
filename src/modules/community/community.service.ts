@@ -732,4 +732,125 @@ export class CommunityService {
       countsMap.get(updated.id) ?? { votesA: 0, votesB: 0 },
     );
   }
+
+  // SPRINT-51: community post reports target FeedPost rows (mobile path /community/posts)
+  async reportCommunityPost(
+    reporterId: string,
+    postId: string,
+    reason: string,
+  ) {
+    const post = await this.prisma.feedPost.findUnique({
+      where: { id: postId },
+      select: { id: true, authorId: true },
+    });
+    if (!post) {
+      throw new NotFoundException({
+        code: 'RESOURCE_NOT_FOUND',
+        message: 'Post not found',
+      });
+    }
+    if (post.authorId === reporterId) {
+      // SPRINT-51: self-report block matching housing/restaurant
+      throw new BadRequestException('You cannot report your own post.');
+    }
+    await this.prisma.listingReport.create({
+      data: {
+        reporterId,
+        targetType: 'COMMUNITY_POST', // SPRINT-51
+        targetId: postId,
+        reason,
+      },
+    });
+    return { message: 'Report submitted. Our team will review it shortly.' };
+  }
+
+  // SPRINT-51: community-member behaviour — targetId is the reported user's id (no membership join table)
+  async reportCommunityMember(
+    reporterId: string,
+    memberUserId: string,
+    reason: string,
+  ) {
+    if (reporterId === memberUserId) {
+      // SPRINT-51: self-report block
+      throw new BadRequestException('You cannot report yourself.');
+    }
+    const member = await this.prisma.user.findUnique({
+      where: { id: memberUserId },
+      select: { id: true },
+    });
+    if (!member) {
+      throw new NotFoundException({
+        code: 'RESOURCE_NOT_FOUND',
+        message: 'Member not found',
+      });
+    }
+    await this.prisma.listingReport.create({
+      data: {
+        reporterId,
+        targetType: 'COMMUNITY_MEMBER', // SPRINT-51
+        targetId: memberUserId, // SPRINT-51: raw user id — no extra lookup required
+        reason,
+      },
+    });
+    return { message: 'Report submitted. Our team will review it shortly.' };
+  }
+
+  // SPRINT-51: report a community Q&A question
+  async reportQuestion(reporterId: string, questionId: string, reason: string) {
+    const question = await this.prisma.communityQuestion.findUnique({
+      where: { id: questionId },
+      select: { id: true, authorId: true },
+    });
+    if (!question) {
+      throw new NotFoundException({
+        code: 'RESOURCE_NOT_FOUND',
+        message: 'Question not found',
+      });
+    }
+    if (question.authorId === reporterId) {
+      // SPRINT-51: self-report block
+      throw new BadRequestException('You cannot report your own question.');
+    }
+    await this.prisma.listingReport.create({
+      data: {
+        reporterId,
+        targetType: 'COMMUNITY_QUESTION', // SPRINT-51
+        targetId: questionId,
+        reason,
+      },
+    });
+    return { message: 'Report submitted. Our team will review it shortly.' };
+  }
+
+  // SPRINT-51: report a community Q&A answer
+  async reportAnswer(
+    reporterId: string,
+    questionId: string,
+    answerId: string,
+    reason: string,
+  ) {
+    const answer = await this.prisma.communityAnswer.findUnique({
+      where: { id: answerId },
+      select: { id: true, authorId: true, questionId: true },
+    });
+    if (!answer || answer.questionId !== questionId) {
+      throw new NotFoundException({
+        code: 'RESOURCE_NOT_FOUND',
+        message: 'Answer not found',
+      });
+    }
+    if (answer.authorId === reporterId) {
+      // SPRINT-51: self-report block
+      throw new BadRequestException('You cannot report your own answer.');
+    }
+    await this.prisma.listingReport.create({
+      data: {
+        reporterId,
+        targetType: 'COMMUNITY_ANSWER', // SPRINT-51
+        targetId: answerId,
+        reason,
+      },
+    });
+    return { message: 'Report submitted. Our team will review it shortly.' };
+  }
 }

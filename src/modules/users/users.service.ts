@@ -575,4 +575,31 @@ export class UsersService {
       orderBy: { createdAt: 'desc' },
     });
   }
+
+  // SPRINT-51: submit a direct user report into the widened ListingReport model
+  async reportUser(reporterId: string, targetUserId: string, reason: string) {
+    if (reporterId === targetUserId) {
+      // SPRINT-51: mirror the housing/restaurant self-report block
+      throw new BadRequestException('You cannot report yourself.');
+    }
+    const target = await this.prisma.user.findUnique({
+      where: { id: targetUserId },
+      select: { id: true },
+    });
+    if (!target) {
+      throw new NotFoundException({
+        code: 'RESOURCE_NOT_FOUND',
+        message: 'User not found',
+      });
+    }
+    await this.prisma.listingReport.create({
+      data: {
+        reporterId,
+        targetType: 'USER', // SPRINT-51: specific target type, not a generic bucket
+        targetId: targetUserId,
+        reason,
+      },
+    });
+    return { message: 'Report submitted. Our team will review it shortly.' };
+  }
 }

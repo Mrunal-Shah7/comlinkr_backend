@@ -9,11 +9,12 @@ import {
   Post,
   Query,
   Req, // SPRINT-35: read the acting session ID for safe session termination
+  UseGuards,
+  UseInterceptors, // SPRINT-52
 } from '@nestjs/common';
-import { ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { ApiOperation, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { RolesGuard } from '../../common/guards/roles.guard';
-import { UseGuards } from '@nestjs/common';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { AdminService } from './admin.service';
 import { AdminUsersQueryDto } from './dto/admin-users-query.dto';
@@ -34,11 +35,16 @@ import { SendBroadcastDto } from './dto/send-broadcast.dto';
 import { AdminSessionsQueryDto } from './dto/admin-sessions-query.dto'; // SPRINT-35: validate session list pagination and user filter
 import type { Request } from 'express'; // SPRINT-35: type the current express-session identifier
 import { BadgeType } from '@prisma/client'; // SPRINT-35: constrain badge revocation to persisted badge types
+import { AdminReportsQueryDto } from './dto/admin-reports-query.dto'; // SPRINT-51
+import { ReportActionDto } from './dto/report-action.dto'; // SPRINT-51
+import { PrivacyRequestReasonDto } from './dto/privacy-request-reason.dto'; // SPRINT-55
+import { AdminAuditInterceptor } from './admin-audit.interceptor'; // SPRINT-52
 
 @ApiTags('Admin')
 @Controller('admin')
 @UseGuards(RolesGuard)
 @Roles('ADMIN')
+@UseInterceptors(AdminAuditInterceptor) // SPRINT-52: audit successful mutating admin requests
 @ApiResponse({ status: 403, description: 'Admin role required' })
 export class AdminController {
   constructor(private readonly adminService: AdminService) {}
@@ -53,9 +59,76 @@ export class AdminController {
     return this.adminService.getAnalytics();
   }
 
+  // SPRINT-52: general admin activity trail — before parameterized routes that could collide
+  @Get('audit-log')
+  @ApiOperation({ summary: 'Paginated admin audit log (newest first)' })
+  getAuditLog(
+    @CurrentUser('id') adminUserId: string,
+    @Query() query: PaginationDto,
+  ) {
+    return this.adminService.getAuditLog(
+      adminUserId,
+      query.page ?? 1,
+      query.limit ?? 20,
+    );
+  }
+
+  // SPRINT-53: admin chat read access
+  @Get('chat/conversations/:id')
+  @ApiOperation({ summary: 'View any conversation (bypasses membership check)' })
+  getAdminChatConversation(
+    @CurrentUser('id') adminUserId: string,
+    @Param('id') id: string,
+  ) {
+    return this.adminService.getAdminChatConversation(adminUserId, id);
+  }
+
+  @Get('chat/conversations/:id/messages')
+  @ApiOperation({ summary: 'List messages for any conversation (cursor pagination)' })
+  @ApiQuery({ name: 'cursor', required: false })
+  @ApiQuery({ name: 'limit', required: false })
+  getAdminChatMessages(
+    @CurrentUser('id') adminUserId: string,
+    @Param('id') id: string,
+    @Query('cursor') cursor?: string,
+    @Query('limit') limit?: string,
+  ) {
+    const limitNum =
+      limit != null
+        ? Math.min(Math.max(1, parseInt(String(limit), 10)), 100)
+        : undefined;
+    return this.adminService.getAdminChatMessages(
+      adminUserId,
+      id,
+      cursor,
+      limitNum,
+    );
+  }
+
+  @Delete('chat/messages/:id')
+  @ApiOperation({ summary: 'Hard-delete a message (admin)' })
+  deleteAdminChatMessage(
+    @CurrentUser('id') adminUserId: string,
+    @Param('id') id: string,
+  ) {
+    return this.adminService.deleteAdminChatMessage(adminUserId, id);
+  }
+
   @Get('reports')
-  getReports(@Query() query: PaginationDto) {
-    return this.adminService.getReports(query.page ?? 1, query.limit ?? 20);
+  getReports(@Query() query: AdminReportsQueryDto) {
+    // SPRINT-51: pass filter query through to the service
+    return this.adminService.getReports(query);
+  }
+
+  // SPRINT-51: POST /admin/reports/:id/action — must be registered before other reports/:id routes that share the param
+  @Post('reports/:id/action')
+  @ApiOperation({ summary: 'Resolve a non-listing report via warn, suspend, or remove-content' })
+  actionReport(
+    @CurrentUser('id') adminUserId: string,
+    @Param('id') id: string,
+    @Body() dto: ReportActionDto,
+  ) {
+    return this.adminService.actionReport(adminUserId, id, dto);
   }
 
   @Get('feed')
@@ -244,7 +317,30 @@ export class AdminController {
       adminUserId, // SPRINT-35: authorize the acting administrator
       id, // SPRINT-35: identify target listing
       dto.action as any, // SPRINT-35: preserve existing action mapping
+      dto.reason, // SPRINT-54: optional rejection reason for listings only
     ); // SPRINT-35: complete defended listing moderation call
+  }
+
+  // SPRINT-54: paginated stories for admin review
+  @Get('stories')
+  getStories(
+    @CurrentUser('id') adminUserId: string, // SPRINT-54: defence-in-depth actor
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+  ) {
+    return this.adminService.getAdminStories(adminUserId, {
+      page: page ? Number(page) : undefined,
+      pageSize: pageSize ? Number(pageSize) : undefined,
+    });
+  }
+
+  // SPRINT-54: hard-delete story mirroring expiry cron file cleanup
+  @Delete('stories/:id')
+  deleteStory(
+    @CurrentUser('id') adminUserId: string, // SPRINT-54: defence-in-depth actor
+    @Param('id') id: string,
+  ) {
+    return this.adminService.adminDeleteStory(adminUserId, id);
   }
 
   @Get('areas')
@@ -427,6 +523,36 @@ export class AdminController {
     );
   }
 
+  @Get('users/:id/warnings') // SPRINT-52: before GET users/:id
+  @ApiOperation({ summary: "Paginated warning history for a user's safety case file" })
+  getUserWarnings(
+    @CurrentUser('id') adminUserId: string,
+    @Param('id') id: string,
+    @Query() query: PaginationDto,
+  ) {
+    return this.adminService.getUserWarnings(
+      adminUserId,
+      id,
+      query.page ?? 1,
+      query.limit ?? 20,
+    );
+  }
+
+  @Get('users/:id/ban-history') // SPRINT-52: before GET users/:id
+  @ApiOperation({ summary: "Paginated ban/restoration history for a user's safety case file" })
+  getUserBanHistory(
+    @CurrentUser('id') adminUserId: string,
+    @Param('id') id: string,
+    @Query() query: PaginationDto,
+  ) {
+    return this.adminService.getUserBanHistory(
+      adminUserId,
+      id,
+      query.page ?? 1,
+      query.limit ?? 20,
+    );
+  }
+
   @Get('users/:id')
   getUserById(@Param('id') id: string) {
     return this.adminService.getUserById(id);
@@ -448,6 +574,72 @@ export class AdminController {
     @Body() dto: WarnUserDto,
   ) {
     return this.adminService.warnUser(adminUserId, id, dto.message);
+  }
+
+  // SPRINT-55: immediate GDPR-style data export
+  @Post('users/:id/data-export')
+  @ApiOperation({ summary: 'Export all cascading-delete-scoped user data' })
+  createDataExport(
+    @CurrentUser('id') adminUserId: string,
+    @Param('id') id: string,
+    @Body() dto: PrivacyRequestReasonDto,
+  ) {
+    return this.adminService.createDataExport(adminUserId, id, dto?.reason);
+  }
+
+  // SPRINT-55: start Sprint 10 soft-delete as admin-initiated erasure
+  @Post('users/:id/erasure-request')
+  @ApiOperation({ summary: 'Start admin-initiated account erasure (15-day window)' })
+  createErasureRequest(
+    @CurrentUser('id') adminUserId: string,
+    @Param('id') id: string,
+    @Body() dto: PrivacyRequestReasonDto,
+  ) {
+    return this.adminService.createErasureRequest(adminUserId, id, dto?.reason);
+  }
+
+  // SPRINT-55: compliance log list
+  @Get('privacy-requests')
+  @ApiOperation({ summary: 'Paginated privacy request compliance log' })
+  getPrivacyRequests(
+    @CurrentUser('id') adminUserId: string,
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+  ) {
+    return this.adminService.getPrivacyRequests(adminUserId, {
+      page: page ? Number(page) : undefined,
+      pageSize: pageSize ? Number(pageSize) : undefined,
+    });
+  }
+
+  // SPRINT-55: admin-only export download (not public file route)
+  @Get('privacy-requests/:id/export-download')
+  @ApiOperation({ summary: 'Download a completed data-export payload (admin only)' })
+  downloadDataExport(
+    @CurrentUser('id') adminUserId: string,
+    @Param('id') id: string,
+  ) {
+    return this.adminService.downloadDataExport(adminUserId, id);
+  }
+
+  // SPRINT-55: compliance sign-off only
+  @Patch('privacy-requests/:id/approve')
+  @ApiOperation({ summary: 'Approve pending erasure (compliance record only)' })
+  approvePrivacyRequest(
+    @CurrentUser('id') adminUserId: string,
+    @Param('id') id: string,
+  ) {
+    return this.adminService.approvePrivacyRequest(adminUserId, id);
+  }
+
+  // SPRINT-55: cancel pending erasure soft-delete
+  @Patch('privacy-requests/:id/reject')
+  @ApiOperation({ summary: 'Reject pending erasure and restore the user' })
+  rejectPrivacyRequest(
+    @CurrentUser('id') adminUserId: string,
+    @Param('id') id: string,
+  ) {
+    return this.adminService.rejectPrivacyRequest(adminUserId, id);
   }
 
   @Post('users/:id/grant-badge')

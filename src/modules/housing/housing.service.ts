@@ -131,6 +131,10 @@ export class HousingService {
       interestCount,
       isSaved,
       isOwner: currentUserId ? listing.ownerId === currentUserId : false,
+      // SPRINT-54: rejection reason only on the owner's view — omit for every other viewer
+      ...(currentUserId && listing.ownerId === currentUserId
+        ? { moderationReason: listing.moderationReason ?? null }
+        : {}),
     };
   }
 

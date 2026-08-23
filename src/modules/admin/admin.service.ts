@@ -8,6 +8,7 @@ import {
   BadgeType,
   BroadcastAudienceType,
   FeedCategory,
+  ListingReportTargetType, // SPRINT-51
   ListingStatus,
   NotificationType,
   Prisma,
@@ -17,7 +18,10 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { ExpoNotificationService } from '../notifications/expo-notification.service';
+import { MessagingService } from '../messaging/messaging.service'; // SPRINT-53
+import { StorageService } from '../storage/storage.service'; // SPRINT-54: mirror stories cron file cleanup
 import { createPaginationMeta } from '../../common/dto/pagination.dto';
+import { randomUUID } from 'crypto'; // SPRINT-55
 import { ConfigService } from '@nestjs/config'; // SPRINT-35: resolve the configured session lifetime for activity approximation
 import { RedisService } from '../../redis/redis.service'; // SPRINT-35: enumerate and terminate Redis-backed sessions
 import type { PaginationDto } from '../../common/dto/pagination.dto';
@@ -31,6 +35,11 @@ import type { CreateAdminPollDto } from './dto/create-admin-poll.dto';
 import type { SendBroadcastDto } from './dto/send-broadcast.dto';
 import type { ReplyToTicketDto } from './dto/reply-to-ticket.dto';
 import type { AdminSessionsQueryDto } from './dto/admin-sessions-query.dto'; // SPRINT-35: type paginated session-list filters
+import type { AdminReportsQueryDto } from './dto/admin-reports-query.dto'; // SPRINT-51
+import {
+  AdminReportAction,
+  type ReportActionDto,
+} from './dto/report-action.dto'; // SPRINT-51
 
 const BADGE_TYPE_NAMES: Record<BadgeType, string> = {
   LANDLORD: 'Verified Landlord',
@@ -76,6 +85,8 @@ export class AdminService {
     private readonly expoNotificationService: ExpoNotificationService,
     private readonly redis: RedisService, // SPRINT-35: reuse the application's injectable Redis connection
     private readonly configService: ConfigService, // SPRINT-35: reuse established session lifetime configuration
+    private readonly messagingService: MessagingService, // SPRINT-53: shared chat moderation paths
+    private readonly storageService: StorageService, // SPRINT-54: story media cleanup
   ) {}
 
   private async assertActiveAdmin(adminUserId: string): Promise<void> { // SPRINT-35: provide defence in depth behind the controller roles guard
@@ -343,6 +354,152 @@ export class AdminService {
     };
   }
 
+  // SPRINT-52: paginated warning history for a user's safety case file
+  async getUserWarnings(
+    adminUserId: string,
+    userId: string,
+    page = 1,
+    limit = 20,
+  ) {
+    await this.assertActiveAdmin(adminUserId); // SPRINT-52: defence-in-depth for moderation history exposure
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true },
+    });
+    if (!user) throw new NotFoundException('User not found');
+
+    const skip = (page - 1) * limit;
+    const [rows, total] = await Promise.all([
+      this.prisma.warningRecord.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+        include: {
+          admin: { select: { id: true, username: true, fullName: true } },
+        },
+      }),
+      this.prisma.warningRecord.count({ where: { userId } }),
+    ]);
+
+    const data = rows.map((w) => ({
+      id: w.id,
+      reason: w.reason,
+      reportId: w.reportId,
+      createdAt: w.createdAt,
+      admin: w.admin,
+    }));
+    return { data, meta: createPaginationMeta(page, limit, total) };
+  }
+
+  // SPRINT-52: paginated ban/restoration history with derived isActive per entry
+  async getUserBanHistory(
+    adminUserId: string,
+    userId: string,
+    page = 1,
+    limit = 20,
+  ) {
+    await this.assertActiveAdmin(adminUserId); // SPRINT-52: defence-in-depth for moderation history exposure
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true },
+    });
+    if (!user) throw new NotFoundException('User not found');
+
+    const skip = (page - 1) * limit;
+    const now = new Date();
+    const [rows, total] = await Promise.all([
+      this.prisma.banRecord.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+        include: {
+          admin: { select: { id: true, username: true, fullName: true } },
+          liftedBy: { select: { id: true, username: true, fullName: true } },
+        },
+      }),
+      this.prisma.banRecord.count({ where: { userId } }),
+    ]);
+
+    const data = rows.map((b) => {
+      // SPRINT-52: active = not lifted AND (no expiry OR expiry still in the future)
+      const isActive =
+        b.liftedAt == null && (b.expiresAt == null || b.expiresAt > now);
+      return {
+        id: b.id,
+        reason: b.reason,
+        reportId: b.reportId,
+        durationDays: b.durationDays,
+        startedAt: b.startedAt,
+        expiresAt: b.expiresAt,
+        liftedAt: b.liftedAt,
+        liftedBy: b.liftedBy,
+        isActive,
+        createdAt: b.createdAt,
+        admin: b.admin,
+      };
+    });
+    return { data, meta: createPaginationMeta(page, limit, total) };
+  }
+
+  // SPRINT-52: paginated general admin activity trail
+  async getAuditLog(adminUserId: string, page = 1, limit = 20) {
+    await this.assertActiveAdmin(adminUserId); // SPRINT-52: defence-in-depth for audit trail exposure
+    const skip = (page - 1) * limit;
+    const [rows, total] = await Promise.all([
+      this.prisma.adminAuditLog.findMany({
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: limit,
+        include: {
+          admin: { select: { id: true, username: true, fullName: true } },
+        },
+      }),
+      this.prisma.adminAuditLog.count(),
+    ]);
+
+    const data = rows.map((e) => ({
+      id: e.id,
+      httpMethod: e.httpMethod,
+      routePattern: e.routePattern,
+      action: `${e.httpMethod} ${e.routePattern}`, // SPRINT-52: derived action label for consumers
+      targetType: e.targetType,
+      targetId: e.targetId,
+      reason: e.reason,
+      createdAt: e.createdAt,
+      admin: e.admin,
+    }));
+    return { data, meta: createPaginationMeta(page, limit, total) };
+  }
+
+  // SPRINT-53: admin chat read — bypass participant membership check
+  async getAdminChatConversation(adminUserId: string, conversationId: string) {
+    await this.assertActiveAdmin(adminUserId); // SPRINT-53: defence-in-depth
+    return this.messagingService.getConversationForAdmin(conversationId);
+  }
+
+  // SPRINT-53: admin chat messages — cursor pagination matching Sprint 8 contract
+  async getAdminChatMessages(
+    adminUserId: string,
+    conversationId: string,
+    cursor?: string,
+    limit?: number,
+  ) {
+    await this.assertActiveAdmin(adminUserId); // SPRINT-53: defence-in-depth
+    return this.messagingService.getMessagesForAdmin(
+      conversationId,
+      cursor,
+      limit,
+    );
+  }
+
+  // SPRINT-53: direct admin message hard-delete (shared path with REMOVE_MESSAGE)
+  async deleteAdminChatMessage(adminUserId: string, messageId: string) {
+    await this.assertActiveAdmin(adminUserId); // SPRINT-53: defence-in-depth
+    return this.messagingService.adminRemoveMessage(messageId);
+  }
+
   async updateUser( // SPRINT-35: authorize the actor independently before changing a user
     adminUserId: string, // SPRINT-35: authenticated acting administrator
     userId: string, // SPRINT-35: target user identifier
@@ -354,9 +511,43 @@ export class AdminService {
     const data: Prisma.UserUpdateInput = {};
     if (dto.role !== undefined) data.role = dto.role;
     if (dto.isActive !== undefined) data.isActive = dto.isActive;
-    const updated = await this.prisma.user.update({
-      where: { id: userId },
-      data,
+
+    // SPRINT-51: when isActive flips, also write ban history without changing the endpoint contract
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const next = await tx.user.update({
+        where: { id: userId },
+        data,
+      });
+      if (dto.isActive !== undefined && dto.isActive !== user.isActive) {
+        if (dto.isActive === false) {
+          // SPRINT-51: deactivation via original path → indefinite/manual ban record
+          await tx.banRecord.create({
+            data: {
+              userId,
+              adminId: adminUserId,
+              reason: 'Deactivated via admin user update',
+              durationDays: null,
+              expiresAt: null,
+            },
+          });
+        } else {
+          // SPRINT-51: reactivation → lift the newest open ban (if any)
+          const openBan = await tx.banRecord.findFirst({
+            where: { userId, liftedAt: null },
+            orderBy: { createdAt: 'desc' },
+          });
+          if (openBan) {
+            await tx.banRecord.update({
+              where: { id: openBan.id },
+              data: {
+                liftedAt: new Date(),
+                liftedByAdminId: adminUserId,
+              },
+            });
+          }
+        }
+      }
+      return next;
     });
     return updated;
   }
@@ -763,8 +954,15 @@ export class AdminService {
     };
   }
 
-  async getReports(page = 1, pageSize = 20) {
-    return this.getUnifiedReports({ page, pageSize });
+  async getReports(query: AdminReportsQueryDto) {
+    // SPRINT-51: accept targetType / targetId / reporterId filters alongside pagination
+    return this.getUnifiedReports({
+      page: query.page ?? 1,
+      pageSize: query.limit ?? 20,
+      targetType: query.targetType,
+      targetId: query.targetId,
+      reporterId: query.reporterId,
+    });
   }
 
   async getFeedPosts(query: {
@@ -896,6 +1094,349 @@ export class AdminService {
     });
 
     return { message: 'Listing deleted and all associated reports resolved.' };
+  }
+
+  // SPRINT-51: generic admin action endpoint for the seven non-listing target types
+  async actionReport(
+    adminUserId: string,
+    reportId: string,
+    dto: ReportActionDto,
+  ) {
+    await this.assertActiveAdmin(adminUserId); // SPRINT-51: Sprint 35 defence-in-depth
+    const report = await this.prisma.listingReport.findUnique({
+      where: { id: reportId },
+    });
+    if (!report) {
+      throw new NotFoundException('Report not found');
+    }
+    if (report.status !== 'PENDING') {
+      throw new BadRequestException('This report has already been actioned.');
+    }
+
+    const { targetType } = report;
+    const action = dto.action;
+
+    // SPRINT-51: housing/restaurant keep their dedicated dismiss/delete-listing flow
+    if (
+      targetType === ListingReportTargetType.HOUSING ||
+      targetType === ListingReportTargetType.RESTAURANT
+    ) {
+      throw new BadRequestException(
+        'Housing and restaurant reports must be resolved via PATCH /admin/reports/:id/dismiss or DELETE /admin/reports/:id/listing.',
+      );
+    }
+
+    const isChatBan =
+      action === AdminReportAction.BAN_FROM_CHAT ||
+      action === AdminReportAction.CHAT_BAN; // SPRINT-53: accept both names
+
+    // SPRINT-53: CHAT_MESSAGE accepts REMOVE_MESSAGE or BAN_FROM_CHAT only
+    if (targetType === ListingReportTargetType.CHAT_MESSAGE) {
+      if (action === AdminReportAction.REMOVE_MESSAGE) {
+        return this.executeRemoveMessageAction(adminUserId, report);
+      }
+      if (isChatBan) {
+        return this.executeBanFromChatAction(
+          adminUserId,
+          report,
+          dto.reason,
+          dto.durationDays,
+        );
+      }
+      throw new BadRequestException(
+        `Action ${action} is not valid for target type CHAT_MESSAGE. Use REMOVE_MESSAGE or BAN_FROM_CHAT.`,
+      );
+    }
+
+    if (
+      action === AdminReportAction.REMOVE_MESSAGE ||
+      isChatBan
+    ) {
+      throw new BadRequestException(
+        `Action ${action} is only valid for CHAT_MESSAGE reports.`,
+      );
+    }
+
+    const userTargets: ListingReportTargetType[] = [
+      ListingReportTargetType.USER,
+      ListingReportTargetType.COMMUNITY_MEMBER,
+    ];
+    const contentTargets: ListingReportTargetType[] = [
+      ListingReportTargetType.COMMUNITY_POST,
+      ListingReportTargetType.COMMUNITY_QUESTION,
+      ListingReportTargetType.COMMUNITY_ANSWER,
+      ListingReportTargetType.EVENT,
+    ];
+
+    if (userTargets.includes(targetType)) {
+      if (
+        action !== AdminReportAction.WARN &&
+        action !== AdminReportAction.SUSPEND
+      ) {
+        throw new BadRequestException(
+          `Action ${action} is not valid for target type ${targetType}. Use WARN or SUSPEND.`,
+        );
+      }
+    } else if (contentTargets.includes(targetType)) {
+      if (action !== AdminReportAction.REMOVE_CONTENT) {
+        throw new BadRequestException(
+          `Action ${action} is not valid for target type ${targetType}. Use REMOVE_CONTENT.`,
+        );
+      }
+    } else {
+      throw new BadRequestException(
+        `Unsupported report target type: ${targetType}`,
+      );
+    }
+
+    if (action === AdminReportAction.WARN) {
+      return this.executeWarnAction(adminUserId, report, dto.reason);
+    }
+    if (action === AdminReportAction.SUSPEND) {
+      return this.executeSuspendAction(
+        adminUserId,
+        report,
+        dto.reason,
+        dto.durationDays,
+      );
+    }
+    return this.executeRemoveContentAction(adminUserId, report);
+  }
+
+  // SPRINT-53: REMOVE_MESSAGE via shared messaging delete path
+  private async executeRemoveMessageAction(
+    adminUserId: string,
+    report: { id: string; targetId: string },
+  ) {
+    await this.assertActiveAdmin(adminUserId); // SPRINT-53: defence-in-depth
+    await this.messagingService.adminRemoveMessage(report.targetId, report.id);
+    return { message: 'Message removed and report resolved.' };
+  }
+
+  // SPRINT-53: BAN_FROM_CHAT — sender blocked in direct conversation only
+  private async executeBanFromChatAction(
+    adminUserId: string,
+    report: { id: string; targetId: string },
+    reason: string | undefined,
+    durationDays: number | undefined,
+  ) {
+    await this.assertActiveAdmin(adminUserId); // SPRINT-53: defence-in-depth
+    const message = await this.prisma.message.findUnique({
+      where: { id: report.targetId },
+      select: {
+        id: true,
+        senderId: true,
+        conversationId: true,
+        conversation: { select: { type: true } },
+      },
+    });
+    if (!message) {
+      throw new NotFoundException('Reported message not found');
+    }
+    if (message.conversation.type !== 'DIRECT') {
+      throw new BadRequestException(
+        'BAN_FROM_CHAT is only available for direct conversations.',
+      );
+    }
+
+    const banReason = reason?.trim() || 'Banned from chat via report review';
+    const startedAt = new Date();
+    const expiresAt =
+      durationDays != null && durationDays >= 1
+        ? new Date(startedAt.getTime() + durationDays * 24 * 60 * 60 * 1000)
+        : null;
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.conversationMember.update({
+        where: {
+          conversationId_userId: {
+            conversationId: message.conversationId,
+            userId: message.senderId,
+          },
+        },
+        data: {
+          status: 'BLOCKED',
+          blockProvenance: 'ADMIN_BAN', // SPRINT-53
+        },
+      });
+      await tx.banRecord.create({
+        data: {
+          userId: message.senderId,
+          adminId: adminUserId,
+          reason: banReason,
+          reportId: report.id,
+          conversationId: message.conversationId, // SPRINT-53
+          durationDays: durationDays ?? null,
+          startedAt,
+          expiresAt,
+        },
+      });
+      await tx.listingReport.update({
+        where: { id: report.id },
+        data: { status: 'RESOLVED' },
+      });
+    });
+
+    return { message: 'User banned from conversation and report resolved.' };
+  }
+
+  // SPRINT-51: resolve community-member / user report target to a user id
+  private resolveReportedUserId(
+    targetType: ListingReportTargetType,
+    targetId: string,
+  ): string {
+    // SPRINT-51: COMMUNITY_MEMBER stores the raw user id (no membership join table exists)
+    return targetId;
+  }
+
+  private async executeWarnAction(
+    adminUserId: string,
+    report: { id: string; targetType: ListingReportTargetType; targetId: string },
+    reason?: string,
+  ) {
+    await this.assertActiveAdmin(adminUserId); // SPRINT-51: defence-in-depth on state-changing branch
+    const userId = this.resolveReportedUserId(report.targetType, report.targetId);
+    const warnReason = reason?.trim() || 'Account warning from report review';
+
+    await this.prisma.$transaction(async (tx) => {
+      const user = await tx.user.findUnique({ where: { id: userId } });
+      if (!user) throw new NotFoundException('Reported user not found');
+
+      await tx.warningRecord.create({
+        data: {
+          userId,
+          adminId: adminUserId,
+          reason: warnReason,
+          reportId: report.id,
+        },
+      });
+      await tx.listingReport.update({
+        where: { id: report.id },
+        data: { status: 'RESOLVED' },
+      });
+    });
+
+    // SPRINT-51: same notification side-effect as warnUser (history + resolve already committed)
+    await this.notificationsService.createNotification({
+      userId,
+      type: NotificationType.SYSTEM,
+      title: 'Account warning',
+      body: warnReason,
+      referenceType: 'ADMIN_WARN',
+      referenceId: adminUserId,
+    });
+    return { message: 'User warned and report resolved.' };
+  }
+
+  private async executeSuspendAction(
+    adminUserId: string,
+    report: { id: string; targetType: ListingReportTargetType; targetId: string },
+    reason: string | undefined,
+    durationDays: number | undefined,
+  ) {
+    await this.assertActiveAdmin(adminUserId); // SPRINT-51: defence-in-depth on state-changing branch
+    if (durationDays == null || durationDays < 1) {
+      throw new BadRequestException(
+        'durationDays is required for SUSPEND and must be at least 1.',
+      );
+    }
+    const userId = this.resolveReportedUserId(report.targetType, report.targetId);
+    const banReason = reason?.trim() || 'Suspended from report review';
+    const startedAt = new Date();
+    const expiresAt = new Date(
+      startedAt.getTime() + durationDays * 24 * 60 * 60 * 1000,
+    );
+
+    await this.prisma.$transaction(async (tx) => {
+      const user = await tx.user.findUnique({ where: { id: userId } });
+      if (!user) throw new NotFoundException('Reported user not found');
+      await tx.user.update({
+        where: { id: userId },
+        data: { isActive: false },
+      });
+      await tx.banRecord.create({
+        data: {
+          userId,
+          adminId: adminUserId,
+          reason: banReason,
+          reportId: report.id,
+          durationDays,
+          startedAt,
+          expiresAt,
+        },
+      });
+      await tx.listingReport.update({
+        where: { id: report.id },
+        data: { status: 'RESOLVED' },
+      });
+    });
+
+    return { message: 'User suspended and report resolved.' };
+  }
+
+  private async executeRemoveContentAction(
+    adminUserId: string,
+    report: { id: string; targetType: ListingReportTargetType; targetId: string },
+  ) {
+    await this.assertActiveAdmin(adminUserId); // SPRINT-51: defence-in-depth on state-changing branch
+
+    await this.prisma.$transaction(async (tx) => {
+      if (report.targetType === ListingReportTargetType.COMMUNITY_POST) {
+        // SPRINT-51: FeedPost cascades media/likes/comments/saves
+        try {
+          await tx.feedPost.delete({ where: { id: report.targetId } });
+        } catch (error: any) {
+          if (error?.code !== 'P2025') throw error;
+        }
+      } else if (
+        report.targetType === ListingReportTargetType.COMMUNITY_QUESTION
+      ) {
+        // SPRINT-51: answers/saves cascade; CommunityUpvote has no FK — delete explicitly
+        const answers = await tx.communityAnswer.findMany({
+          where: { questionId: report.targetId },
+          select: { id: true },
+        });
+        const answerIds = answers.map((a) => a.id);
+        await tx.communityUpvote.deleteMany({
+          where: { targetType: 'QUESTION', targetId: report.targetId },
+        });
+        if (answerIds.length) {
+          await tx.communityUpvote.deleteMany({
+            where: { targetType: 'ANSWER', targetId: { in: answerIds } },
+          });
+        }
+        try {
+          await tx.communityQuestion.delete({ where: { id: report.targetId } });
+        } catch (error: any) {
+          if (error?.code !== 'P2025') throw error;
+        }
+      } else if (
+        report.targetType === ListingReportTargetType.COMMUNITY_ANSWER
+      ) {
+        await tx.communityUpvote.deleteMany({
+          where: { targetType: 'ANSWER', targetId: report.targetId },
+        });
+        try {
+          await tx.communityAnswer.delete({ where: { id: report.targetId } });
+        } catch (error: any) {
+          if (error?.code !== 'P2025') throw error;
+        }
+      } else if (report.targetType === ListingReportTargetType.EVENT) {
+        // SPRINT-51: attendees/reviews/saves/images cascade from Event
+        try {
+          await tx.event.delete({ where: { id: report.targetId } });
+        } catch (error: any) {
+          if (error?.code !== 'P2025') throw error;
+        }
+      }
+
+      await tx.listingReport.update({
+        where: { id: report.id },
+        data: { status: 'RESOLVED' },
+      });
+    });
+
+    return { message: 'Content removed and report resolved.' };
   }
 
   async getAdminPolls(query: { page?: number; pageSize?: number }) {
@@ -1189,6 +1730,7 @@ export class AdminService {
     adminUserId: string, // SPRINT-35: authenticated acting administrator
     listingId: string,
     action: 'approve' | 'reject' | 'delete' | 'hide',
+    reason?: string, // SPRINT-54: optional rejection note from shared ModerateActionDto
   ) {
     await this.assertActiveAdmin(adminUserId); // SPRINT-35: enforce active ADMIN role before listing moderation
     const listing = await this.prisma.housingListing.findUnique({
@@ -1200,15 +1742,74 @@ export class AdminService {
     } else if (action === 'approve') {
       await this.prisma.housingListing.update({
         where: { id: listingId },
-        data: { status: 'AVAILABLE' },
+        data: {
+          status: 'AVAILABLE',
+          moderationReason: null, // SPRINT-54: clear stale rejection reason on approval
+        },
       });
-    } else {
+    } else if (action === 'reject') {
+      // SPRINT-54: persist reason only on reject; empty/missing clears the field
       await this.prisma.housingListing.update({
         where: { id: listingId },
-        data: { status: 'UNLISTED' },
+        data: {
+          status: 'UNLISTED',
+          moderationReason: reason?.trim() ? reason.trim() : null,
+        },
+      });
+    } else {
+      // hide (and any other non-reject path): clear reason so it cannot linger
+      await this.prisma.housingListing.update({
+        where: { id: listingId },
+        data: {
+          status: 'UNLISTED',
+          moderationReason: null, // SPRINT-54
+        },
       });
     }
     return { message: `Listing ${action}d successfully` };
+  }
+
+  // SPRINT-54: admin stories list matching restaurant/listing pagination convention
+  async getAdminStories(
+    adminUserId: string,
+    query: { page?: number; pageSize?: number },
+  ) {
+    await this.assertActiveAdmin(adminUserId); // SPRINT-54: defence-in-depth for user-data exposure
+    const page = query.page ?? 1;
+    const pageSize = query.pageSize ?? 20;
+    const skip = (page - 1) * pageSize;
+    const [data, total] = await Promise.all([
+      this.prisma.story.findMany({
+        include: {
+          author: { select: { id: true, username: true, fullName: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: pageSize,
+      }),
+      this.prisma.story.count(),
+    ]);
+    return { data, meta: createPaginationMeta(page, pageSize, total) };
+  }
+
+  // SPRINT-54: hard-delete story; mirror stories.cron file cleanup exactly
+  async adminDeleteStory(adminUserId: string, storyId: string) {
+    await this.assertActiveAdmin(adminUserId); // SPRINT-54: defence-in-depth
+    const story = await this.prisma.story.findUnique({
+      where: { id: storyId },
+      select: { id: true, mediaUrl: true },
+    });
+    if (!story) throw new NotFoundException('Story not found');
+    await this.prisma.story.delete({ where: { id: story.id } }); // SPRINT-54: comments/likes/saves cascade
+    if (story.mediaUrl) {
+      // SPRINT-54: identical to StoriesCronService.handleStoryExpiry
+      try {
+        await this.storageService.deleteFile(story.mediaUrl);
+      } catch {
+        // ignore
+      }
+    }
+    return { message: 'Story deleted successfully' };
   }
 
   async getAreas() {
@@ -1226,66 +1827,64 @@ export class AdminService {
     }));
   }
 
-  async getUnifiedReports(query: { page?: number; pageSize?: number }) {
+  async getUnifiedReports(query: {
+    page?: number;
+    pageSize?: number;
+    targetType?: ListingReportTargetType; // SPRINT-51
+    targetId?: string; // SPRINT-51
+    reporterId?: string; // SPRINT-51
+  }) {
     const page = query.page ?? 1;
     const pageSize = query.pageSize ?? 20;
-    const listingReportsPromise = this.prisma.listingReport.findMany({
-      where: { status: 'PENDING' },
+    // SPRINT-51: single authoritative source is ListingReport after ContentReport migration
+    const where: Prisma.ListingReportWhereInput = {
+      status: 'PENDING',
+    };
+    if (query.targetType) where.targetType = query.targetType; // SPRINT-51
+    if (query.targetId) where.targetId = query.targetId; // SPRINT-51
+    if (query.reporterId) where.reporterId = query.reporterId; // SPRINT-51
+
+    const listingReports = await this.prisma.listingReport.findMany({
+      where,
       include: {
         reporter: { select: { id: true, username: true, fullName: true } },
       },
       orderBy: { createdAt: 'desc' },
     });
-    const contentReportDelegate = (this.prisma as any).contentReport;
-    if (!contentReportDelegate) {
-      console.warn(
-        'ContentReport model not available in deployed schema; returning listing reports only.',
-      );
-    }
-    const contentReportsPromise = contentReportDelegate
-      ? contentReportDelegate.findMany({
-          include: {
-            reporter: { select: { id: true, username: true, fullName: true } },
-          },
-          orderBy: { createdAt: 'desc' },
-        })
-      : Promise.resolve([]);
-    const [listingReports, contentReports] = await Promise.all([
-      listingReportsPromise,
-      contentReportsPromise,
-    ]);
+
     const listingMapped = await Promise.all(
       listingReports.map(async (report) => {
-        const target =
-          report.targetType === 'HOUSING'
-            ? await this.prisma.housingListing.findUnique({
-                where: { id: report.targetId },
-                select: { title: true, address: true },
-              })
-            : await this.prisma.restaurant.findUnique({
-                where: { id: report.targetId },
-                select: { name: true, address: true },
-              });
+        let targetTitle: string | null = null;
+        let targetAddress: string | null = null;
+        if (report.targetType === 'HOUSING') {
+          const target = await this.prisma.housingListing.findUnique({
+            where: { id: report.targetId },
+            select: { title: true, address: true },
+          });
+          targetTitle = target?.title ?? null;
+          targetAddress = target?.address ?? null;
+        } else if (report.targetType === 'RESTAURANT') {
+          const target = await this.prisma.restaurant.findUnique({
+            where: { id: report.targetId },
+            select: { name: true, address: true },
+          });
+          targetTitle = target?.name ?? null;
+          targetAddress = target?.address ?? null;
+        }
         return {
           ...report,
+          // SPRINT-51: keep source tag for mobile compatibility; all rows are ListingReport now
           source: 'LISTING_REPORT' as const,
-          targetTitle: (target as any)?.title ?? (target as any)?.name ?? null,
-          targetAddress: (target as any)?.address ?? null,
+          targetTitle,
+          targetAddress,
         };
       }),
     );
-    const contentMapped = (contentReports as any[]).map((report) => ({
-      ...report,
-      source: 'CONTENT_REPORT' as const,
-    }));
-    const merged = [...listingMapped, ...contentMapped].sort(
-      (a, b) =>
-        new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-    );
+
     const start = (page - 1) * pageSize;
     return {
-      data: merged.slice(start, start + pageSize),
-      meta: createPaginationMeta(page, pageSize, merged.length),
+      data: listingMapped.slice(start, start + pageSize),
+      meta: createPaginationMeta(page, pageSize, listingMapped.length),
     };
   }
 
@@ -1460,5 +2059,679 @@ export class AdminService {
       }
     }
     return this.getPlatformSettings();
+  }
+
+  // SPRINT-55: assemble export scoped exactly to performHardDelete tables
+  private async buildUserDataExport(userId: string) {
+    const feedPosts = await this.prisma.feedPost.findMany({
+      where: { authorId: userId },
+    });
+    const feedPostIds = feedPosts.map((p) => p.id);
+    const housingListings = await this.prisma.housingListing.findMany({
+      where: { ownerId: userId },
+    });
+    const listingIds = housingListings.map((l) => l.id);
+    const sharedSpaces = await this.prisma.sharedSpace.findMany({
+      where: { ownerId: userId },
+    });
+    const sharedSpaceIds = sharedSpaces.map((s) => s.id);
+    const restaurants = await this.prisma.restaurant.findMany({
+      where: { ownerId: userId },
+    });
+    const restaurantIds = restaurants.map((r) => r.id);
+    const communityQuestions = await this.prisma.communityQuestion.findMany({
+      where: { authorId: userId },
+    });
+    const questionIds = communityQuestions.map((q) => q.id);
+    const answerIdsUnderQuestions = questionIds.length
+      ? (
+          await this.prisma.communityAnswer.findMany({
+            where: { questionId: { in: questionIds } },
+            select: { id: true },
+          })
+        ).map((a) => a.id)
+      : [];
+    const conversationsCreated = await this.prisma.conversation.findMany({
+      where: { createdById: userId },
+    });
+    const conversationIds = conversationsCreated.map((c) => c.id);
+    const events = await this.prisma.event.findMany({
+      where: { authorId: userId },
+    });
+    const eventIds = events.map((e) => e.id);
+    const stories = await this.prisma.story.findMany({
+      where: { authorId: userId },
+    });
+    const storyIds = stories.map((s) => s.id);
+    const challenges = await this.prisma.challenge.findMany({
+      where: { authorId: userId },
+    });
+    const challengeIds = challenges.map((c) => c.id);
+    const badgeApplications = await this.prisma.badgeApplication.findMany({
+      where: { userId },
+    });
+    const applicationIds = badgeApplications.map((a) => a.id);
+    const adminPolls = await this.prisma.adminPoll.findMany({
+      where: { createdById: userId },
+    });
+    const adminPollIds = adminPolls.map((p) => p.id);
+
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      include: {
+        vibes: true,
+        interests: true,
+        communities: true,
+      },
+    });
+    if (!user) throw new NotFoundException('User not found');
+
+    const authProviders = (
+      await this.prisma.authProvider.findMany({ where: { userId } })
+    ).map((p) => ({
+      ...p,
+      passwordHash: p.passwordHash ? '[REDACTED]' : null, // SPRINT-55: never export credential secrets
+      refreshToken: p.refreshToken ? '[REDACTED]' : null,
+    }));
+
+    return {
+      exportedAt: new Date().toISOString(),
+      user: {
+        id: user.id,
+        email: user.email,
+        username: user.username,
+        fullName: user.fullName,
+        avatarUrl: user.avatarUrl,
+        bio: user.bio,
+        phoneNumber: user.phoneNumber,
+        role: user.role,
+        isActive: user.isActive,
+        deletedAt: user.deletedAt,
+        onboardingCompleted: user.onboardingCompleted,
+        agreementAcceptedAt: user.agreementAcceptedAt,
+        termsAcceptedVersion: user.termsAcceptedVersion,
+        lastActiveAt: user.lastActiveAt,
+        createdAt: user.createdAt,
+        updatedAt: user.updatedAt,
+        vibes: user.vibes,
+        interests: user.interests,
+        communities: user.communities,
+      },
+      AuthProvider: authProviders,
+      UserLocation: await this.prisma.userLocation.findMany({
+        where: { userId },
+      }),
+      RoommatePreferences: await this.prisma.roommatePreferences.findUnique({
+        where: { userId },
+      }),
+      FeedPost: feedPosts,
+      FeedPostMedia: feedPostIds.length
+        ? await this.prisma.feedPostMedia.findMany({
+            where: { feedPostId: { in: feedPostIds } },
+          })
+        : [],
+      FeedLike: await this.prisma.feedLike.findMany({
+        where: {
+          OR: [
+            { userId },
+            ...(feedPostIds.length
+              ? [{ feedPostId: { in: feedPostIds } }]
+              : []),
+          ],
+        },
+      }),
+      FeedComment: await this.prisma.feedComment.findMany({
+        where: {
+          OR: [
+            { userId },
+            ...(feedPostIds.length
+              ? [{ feedPostId: { in: feedPostIds } }]
+              : []),
+          ],
+        },
+      }),
+      FeedSave: await this.prisma.feedSave.findMany({
+        where: {
+          OR: [
+            { userId },
+            ...(feedPostIds.length
+              ? [{ feedPostId: { in: feedPostIds } }]
+              : []),
+          ],
+        },
+      }),
+      HousingListing: housingListings,
+      HousingImage: listingIds.length
+        ? await this.prisma.housingImage.findMany({
+            where: { listingId: { in: listingIds } },
+          })
+        : [],
+      HousingInterest: await this.prisma.housingInterest.findMany({
+        where: {
+          OR: [
+            { userId },
+            ...(listingIds.length ? [{ listingId: { in: listingIds } }] : []),
+          ],
+        },
+      }),
+      HousingSave: await this.prisma.housingSave.findMany({
+        where: {
+          OR: [
+            { userId },
+            ...(listingIds.length ? [{ listingId: { in: listingIds } }] : []),
+          ],
+        },
+      }),
+      SharedSpace: sharedSpaces,
+      SharedSpaceImage: sharedSpaceIds.length
+        ? await this.prisma.sharedSpaceImage.findMany({
+            where: { sharedSpaceId: { in: sharedSpaceIds } },
+          })
+        : [],
+      SharedSpaceApplication: await this.prisma.sharedSpaceApplication.findMany(
+        {
+          where: {
+            OR: [
+              { userId },
+              ...(sharedSpaceIds.length
+                ? [{ sharedSpaceId: { in: sharedSpaceIds } }]
+                : []),
+            ],
+          },
+        },
+      ),
+      SharedSpaceSave: await this.prisma.sharedSpaceSave.findMany({
+        where: {
+          OR: [
+            { userId },
+            ...(sharedSpaceIds.length
+              ? [{ sharedSpaceId: { in: sharedSpaceIds } }]
+              : []),
+          ],
+        },
+      }),
+      Restaurant: restaurants,
+      RestaurantImage: restaurantIds.length
+        ? await this.prisma.restaurantImage.findMany({
+            where: { restaurantId: { in: restaurantIds } },
+          })
+        : [],
+      RestaurantReview: await this.prisma.restaurantReview.findMany({
+        where: {
+          OR: [
+            { userId },
+            ...(restaurantIds.length
+              ? [{ restaurantId: { in: restaurantIds } }]
+              : []),
+          ],
+        },
+      }),
+      RestaurantReservation: await this.prisma.restaurantReservation.findMany({
+        where: {
+          OR: [
+            { userId },
+            ...(restaurantIds.length
+              ? [{ restaurantId: { in: restaurantIds } }]
+              : []),
+          ],
+        },
+      }),
+      RestaurantFavorite: await this.prisma.restaurantFavorite.findMany({
+        where: {
+          OR: [
+            { userId },
+            ...(restaurantIds.length
+              ? [{ restaurantId: { in: restaurantIds } }]
+              : []),
+          ],
+        },
+      }),
+      RestaurantSave: await this.prisma.restaurantSave.findMany({
+        where: {
+          OR: [
+            { userId },
+            ...(restaurantIds.length
+              ? [{ restaurantId: { in: restaurantIds } }]
+              : []),
+          ],
+        },
+      }),
+      CommunityQuestion: communityQuestions,
+      CommunityAnswer: await this.prisma.communityAnswer.findMany({
+        where: {
+          OR: [
+            { authorId: userId },
+            ...(questionIds.length
+              ? [{ questionId: { in: questionIds } }]
+              : []),
+          ],
+        },
+      }),
+      CommunityUpvote: await this.prisma.communityUpvote.findMany({
+        where: {
+          OR: [
+            { userId },
+            ...(questionIds.length
+              ? [
+                  {
+                    targetType: 'QUESTION' as const,
+                    targetId: { in: questionIds },
+                  },
+                ]
+              : []),
+            ...(answerIdsUnderQuestions.length
+              ? [
+                  {
+                    targetType: 'ANSWER' as const,
+                    targetId: { in: answerIdsUnderQuestions },
+                  },
+                ]
+              : []),
+          ],
+        },
+      }),
+      CommunitySave: await this.prisma.communitySave.findMany({
+        where: {
+          OR: [
+            { userId },
+            ...(questionIds.length
+              ? [{ questionId: { in: questionIds } }]
+              : []),
+          ],
+        },
+      }),
+      CommunityPollVote: await this.prisma.communityPollVote.findMany({
+        where: { userId },
+      }),
+      NeighborhoodMoodVote: await this.prisma.neighborhoodMoodVote.findMany({
+        where: { userId },
+      }),
+      Conversation: conversationsCreated,
+      ConversationMember: await this.prisma.conversationMember.findMany({
+        where: {
+          OR: [
+            { userId },
+            ...(conversationIds.length
+              ? [{ conversationId: { in: conversationIds } }]
+              : []),
+          ],
+        },
+      }),
+      Message: await this.prisma.message.findMany({
+        where: {
+          OR: [
+            { senderId: userId },
+            ...(conversationIds.length
+              ? [{ conversationId: { in: conversationIds } }]
+              : []),
+          ],
+        },
+      }),
+      Event: events,
+      EventImage: eventIds.length
+        ? await this.prisma.eventImage.findMany({
+            where: { eventId: { in: eventIds } },
+          })
+        : [],
+      EventAttendee: await this.prisma.eventAttendee.findMany({
+        where: {
+          OR: [
+            { userId },
+            ...(eventIds.length ? [{ eventId: { in: eventIds } }] : []),
+          ],
+        },
+      }),
+      EventSave: await this.prisma.eventSave.findMany({
+        where: {
+          OR: [
+            { userId },
+            ...(eventIds.length ? [{ eventId: { in: eventIds } }] : []),
+          ],
+        },
+      }),
+      Story: stories,
+      StoryComment: await this.prisma.storyComment.findMany({
+        where: {
+          OR: [
+            { authorId: userId },
+            ...(storyIds.length ? [{ storyId: { in: storyIds } }] : []),
+          ],
+        },
+      }),
+      StoryLike: await this.prisma.storyLike.findMany({
+        where: {
+          OR: [
+            { userId },
+            ...(storyIds.length ? [{ storyId: { in: storyIds } }] : []),
+          ],
+        },
+      }),
+      StorySave: await this.prisma.storySave.findMany({
+        where: {
+          OR: [
+            { userId },
+            ...(storyIds.length ? [{ storyId: { in: storyIds } }] : []),
+          ],
+        },
+      }),
+      Challenge: challenges,
+      ChallengeParticipant: await this.prisma.challengeParticipant.findMany({
+        where: {
+          OR: [
+            { userId },
+            ...(challengeIds.length
+              ? [{ challengeId: { in: challengeIds } }]
+              : []),
+          ],
+        },
+      }),
+      BadgeApplication: badgeApplications,
+      BadgeDocument: applicationIds.length
+        ? await this.prisma.badgeDocument.findMany({
+            where: { applicationId: { in: applicationIds } },
+          })
+        : [],
+      UserBadge: await this.prisma.userBadge.findMany({ where: { userId } }),
+      Notification: await this.prisma.notification.findMany({
+        where: { userId },
+      }),
+      NotificationPreference:
+        await this.prisma.notificationPreference.findUnique({
+          where: { userId },
+        }),
+      PrivacySettings: await this.prisma.privacySettings.findUnique({
+        where: { userId },
+      }),
+      BlockedUser: await this.prisma.blockedUser.findMany({
+        where: { OR: [{ blockerId: userId }, { blockedId: userId }] },
+      }),
+      RoommateSave: await this.prisma.roommateSave.findMany({
+        where: { OR: [{ userId }, { savedUserId: userId }] },
+      }),
+      PushToken: await this.prisma.pushToken.findMany({ where: { userId } }),
+      PushDevice: await this.prisma.pushDevice.findMany({ where: { userId } }),
+      BroadcastNotification: await this.prisma.broadcastNotification.findMany({
+        where: { sentById: userId },
+      }),
+      SupportTicket: await this.prisma.supportTicket.findMany({
+        where: { userId },
+      }),
+      AdminPoll: adminPolls,
+      AdminPollOption: adminPollIds.length
+        ? await this.prisma.adminPollOption.findMany({
+            where: { pollId: { in: adminPollIds } },
+          })
+        : [],
+      AdminPollVote: await this.prisma.adminPollVote.findMany({
+        where: {
+          OR: [
+            { userId },
+            ...(adminPollIds.length
+              ? [{ pollId: { in: adminPollIds } }]
+              : []),
+          ],
+        },
+      }),
+      ContentReport: await this.prisma.contentReport.findMany({
+        where: { reporterId: userId },
+      }),
+      ListingReport: await this.prisma.listingReport.findMany({
+        where: { reporterId: userId },
+      }),
+      NewsArticleLike: await this.prisma.newsArticleLike.findMany({
+        where: { userId },
+      }),
+      NewsArticleComment: await this.prisma.newsArticleComment.findMany({
+        where: { userId },
+      }),
+      NewsArticleSave: await this.prisma.newsArticleSave.findMany({
+        where: { userId },
+      }),
+    };
+  }
+
+  // SPRINT-55: immediate data export + completed compliance record
+  async createDataExport(
+    adminUserId: string,
+    targetUserId: string,
+    reason?: string,
+  ) {
+    await this.assertActiveAdmin(adminUserId);
+    const target = await this.prisma.user.findUnique({
+      where: { id: targetUserId },
+      select: { id: true, username: true, email: true },
+    });
+    if (!target) throw new NotFoundException('User not found');
+
+    const payload = await this.buildUserDataExport(targetUserId);
+    const buffer = Buffer.from(JSON.stringify(payload, null, 2), 'utf8');
+    let exportFileKey = `inline:pending`; // SPRINT-55: replaced after PrivacyRequest id known
+    try {
+      exportFileKey = await this.storageService.uploadPrivateGeneratedJson(
+        buffer,
+        `privacy-exports/${targetUserId}`,
+        randomUUID(),
+      );
+    } catch {
+      // SPRINT-55: Cloudinary optional; payload always stored on the compliance row
+      exportFileKey = `inline:db`;
+    }
+
+    const record = await this.prisma.privacyRequest.create({
+      data: {
+        userId: target.id,
+        snapshotUsername: target.username,
+        snapshotEmail: target.email,
+        type: 'DATA_EXPORT',
+        status: 'COMPLETED',
+        requestedByAdminId: adminUserId,
+        reason: reason?.trim() || null,
+        exportFileKey,
+        exportPayload: payload as unknown as Prisma.InputJsonValue,
+      },
+    });
+
+    if (exportFileKey === 'inline:db' || exportFileKey === 'inline:pending') {
+      await this.prisma.privacyRequest.update({
+        where: { id: record.id },
+        data: { exportFileKey: `inline:${record.id}` },
+      });
+      record.exportFileKey = `inline:${record.id}`;
+    }
+
+    return {
+      message: 'Data export completed',
+      privacyRequestId: record.id,
+      exportFileKey: record.exportFileKey,
+      downloadPath: `/admin/privacy-requests/${record.id}/export-download`,
+    };
+  }
+
+  // SPRINT-55: admin-guarded download — never a public Cloudinary URL
+  async downloadDataExport(adminUserId: string, privacyRequestId: string) {
+    await this.assertActiveAdmin(adminUserId);
+    const record = await this.prisma.privacyRequest.findUnique({
+      where: { id: privacyRequestId },
+    });
+    if (!record || record.type !== 'DATA_EXPORT') {
+      throw new NotFoundException('Export not found');
+    }
+    if (record.exportPayload == null) {
+      throw new NotFoundException('Export payload missing');
+    }
+    return record.exportPayload;
+  }
+
+  // SPRINT-55: start Sprint 10 soft-delete, tag ADMIN source, log pending erasure
+  async createErasureRequest(
+    adminUserId: string,
+    targetUserId: string,
+    reason?: string,
+  ) {
+    await this.assertActiveAdmin(adminUserId);
+    const target = await this.prisma.user.findUnique({
+      where: { id: targetUserId },
+      select: {
+        id: true,
+        username: true,
+        email: true,
+        isActive: true,
+        deletedAt: true,
+      },
+    });
+    if (!target) throw new NotFoundException('User not found');
+    if (target.isActive === false && target.deletedAt != null) {
+      throw new BadRequestException('Account deletion already requested.');
+    }
+
+    const deletionDate = new Date();
+    deletionDate.setDate(deletionDate.getDate() + 15);
+    // SPRINT-55: mirror SettingsService.requestAccountDeletion fields + ADMIN tag
+    await this.prisma.user.update({
+      where: { id: targetUserId },
+      data: {
+        isActive: false,
+        deletedAt: deletionDate,
+        deletionSource: 'ADMIN',
+      },
+    });
+
+    const record = await this.prisma.privacyRequest.create({
+      data: {
+        userId: target.id,
+        snapshotUsername: target.username,
+        snapshotEmail: target.email,
+        type: 'ERASURE',
+        status: 'PENDING',
+        requestedByAdminId: adminUserId,
+        reason: reason?.trim() || null,
+      },
+    });
+
+    return {
+      message: 'Erasure request started; account scheduled for deletion',
+      privacyRequestId: record.id,
+      deletionDate: deletionDate.toISOString(),
+    };
+  }
+
+  // SPRINT-55: paginated compliance log
+  async getPrivacyRequests(
+    adminUserId: string,
+    query: { page?: number; pageSize?: number },
+  ) {
+    await this.assertActiveAdmin(adminUserId);
+    const page = query.page ?? 1;
+    const pageSize = query.pageSize ?? 20;
+    const skip = (page - 1) * pageSize;
+    const [data, total] = await Promise.all([
+      this.prisma.privacyRequest.findMany({
+        orderBy: { createdAt: 'desc' },
+        skip,
+        take: pageSize,
+        select: {
+          id: true,
+          userId: true,
+          snapshotUsername: true,
+          snapshotEmail: true,
+          type: true,
+          status: true,
+          requestedByAdminId: true,
+          reason: true,
+          exportFileKey: true,
+          resolvedAt: true,
+          resolvedByAdminId: true,
+          createdAt: true,
+        },
+      }),
+      this.prisma.privacyRequest.count(),
+    ]);
+    return { data, meta: createPaginationMeta(page, pageSize, total) };
+  }
+
+  // SPRINT-55: compliance-only sign-off; does not change user soft-delete state
+  async approvePrivacyRequest(adminUserId: string, requestId: string) {
+    await this.assertActiveAdmin(adminUserId);
+    const record = await this.prisma.privacyRequest.findUnique({
+      where: { id: requestId },
+    });
+    if (!record) throw new NotFoundException('Privacy request not found');
+    if (record.type !== 'ERASURE') {
+      throw new BadRequestException(
+        'Approve is only valid for pending erasure requests.',
+      );
+    }
+    if (record.status !== 'PENDING') {
+      throw new BadRequestException(
+        'Only pending erasure requests can be approved.',
+      );
+    }
+    const updated = await this.prisma.privacyRequest.update({
+      where: { id: requestId },
+      data: {
+        status: 'APPROVED',
+        resolvedAt: new Date(),
+        resolvedByAdminId: adminUserId,
+      },
+    });
+    return {
+      message:
+        'Erasure request approved for compliance record only; soft-delete state unchanged',
+      privacyRequest: updated,
+    };
+  }
+
+  // SPRINT-55: cancel pending admin erasure (restore user) + mark rejected
+  async rejectPrivacyRequest(adminUserId: string, requestId: string) {
+    await this.assertActiveAdmin(adminUserId);
+    const record = await this.prisma.privacyRequest.findUnique({
+      where: { id: requestId },
+    });
+    if (!record) throw new NotFoundException('Privacy request not found');
+    if (record.type !== 'ERASURE') {
+      throw new BadRequestException(
+        'Reject is only valid for pending erasure requests.',
+      );
+    }
+    if (record.status !== 'PENDING') {
+      throw new BadRequestException(
+        'Only pending erasure requests can be rejected.',
+      );
+    }
+
+    if (record.userId) {
+      const user = await this.prisma.user.findUnique({
+        where: { id: record.userId },
+        select: { isActive: true, deletedAt: true, deletionSource: true },
+      });
+      if (
+        user &&
+        user.isActive === false &&
+        user.deletedAt != null &&
+        user.deletedAt > new Date()
+      ) {
+        await this.prisma.user.update({
+          where: { id: record.userId },
+          data: {
+            isActive: true,
+            deletedAt: null,
+            deletionSource: 'NONE',
+          },
+        });
+      }
+    }
+
+    const updated = await this.prisma.privacyRequest.update({
+      where: { id: requestId },
+      data: {
+        status: 'REJECTED',
+        resolvedAt: new Date(),
+        resolvedByAdminId: adminUserId,
+      },
+    });
+    return {
+      message: 'Erasure request rejected; pending deletion cancelled',
+      privacyRequest: updated,
+    };
   }
 }

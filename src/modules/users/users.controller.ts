@@ -31,6 +31,7 @@ import { UpdateProfileDto } from './dto/update-profile.dto';
 import { UserRegisterPushTokenDto } from './dto/register-push-token.dto';
 import { CreateSupportTicketDto } from './dto/create-support-ticket.dto';
 import { PaginationDto } from '../../common/dto/pagination.dto';
+import { ReportReasonDto } from '../../common/dto/report-reason.dto'; // SPRINT-51
 
 const AVATAR_MAX_SIZE = 5 * 1024 * 1024;
 
@@ -203,6 +204,18 @@ export class UsersController {
     @Param('id') targetUserId: string,
   ) {
     return this.settingsService.unblockUser(currentUserId, targetUserId);
+  }
+
+  // SPRINT-51: POST /users/:id/report — matches mobile profile.api reportUser
+  @Post(':id/report')
+  @ApiOperation({ summary: 'Report a user' })
+  @ApiBody({ type: ReportReasonDto })
+  async reportUser(
+    @CurrentUser('id') reporterId: string,
+    @Param('id') targetUserId: string,
+    @Body() dto: ReportReasonDto,
+  ) {
+    return this.usersService.reportUser(reporterId, targetUserId, dto.reason);
   }
 
   @Get(':id')

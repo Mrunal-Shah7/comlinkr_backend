@@ -374,6 +374,39 @@ export class StorageService {
     return `${resourceType}:${extension}:${publicId}`;
   }
 
+  // SPRINT-55: server-generated JSON export — private Cloudinary raw; no public URL
+  async uploadPrivateGeneratedJson(
+    buffer: Buffer,
+    folder: string,
+    fileUuid: string,
+  ): Promise<string> {
+    const publicId = `${folder}/${fileUuid}`;
+    await new Promise<UploadApiResponse>((resolve, reject) => {
+      const stream = cloudinary.uploader.upload_stream(
+        {
+          public_id: publicId,
+          resource_type: 'raw',
+          type: 'private',
+          format: 'json',
+          overwrite: true,
+        },
+        (error, result) => {
+          if (error) {
+            reject(
+              error instanceof Error
+                ? error
+                : new Error('Cloudinary private JSON upload failed'),
+            );
+          } else if (!result) {
+            reject(new Error('Cloudinary upload returned no result'));
+          } else resolve(result);
+        },
+      );
+      stream.end(buffer);
+    });
+    return `raw:json:${publicId}`;
+  }
+
   getSignedUrl(objectKey: string, expiresInSeconds: number): Promise<string> {
     const parts = objectKey.split(':');
     if (parts.length !== 3) {

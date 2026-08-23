@@ -1291,6 +1291,7 @@ export class EventsService {
   async reportEvent(userId: string, eventId: string, reason: string) {
     const event = await this.prisma.event.findUnique({
       where: { id: eventId },
+      select: { id: true, authorId: true }, // SPRINT-51: need author for self-report guard
     });
     if (!event) {
       throw new NotFoundException({
@@ -1298,10 +1299,15 @@ export class EventsService {
         message: 'Event not found',
       });
     }
-    await this.prisma.contentReport.create({
+    if (event.authorId === userId) {
+      // SPRINT-51: self-report block matching housing/restaurant
+      throw new BadRequestException('You cannot report your own event.');
+    }
+    // SPRINT-51: write into the widened ListingReport model (was ContentReport)
+    await this.prisma.listingReport.create({
       data: {
         reporterId: userId,
-        targetType: 'EVENT',
+        targetType: 'EVENT', // SPRINT-51: enum value on ListingReport
         targetId: eventId,
         reason,
       },

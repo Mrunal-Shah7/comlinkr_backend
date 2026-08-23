@@ -21,6 +21,7 @@ import { SendMessageDto } from './dto/send-message.dto';
 import { UpdateMemberStatusDto } from './dto/update-member-status.dto';
 import { ConversationsQueryDto } from './dto/conversations-query.dto';
 import { UpdateConversationMuteDto } from './dto/update-conversation-mute.dto'; // SPRINT-45: validated single-boolean mute body
+import { ReportReasonDto } from '../../common/dto/report-reason.dto'; // SPRINT-51
 import { AUDIO_MAX_SIZE_BYTES } from '../storage/storage.service'; // SPRINT-36: share the exact audio upload size ceiling with the interceptor
 
 const MESSAGE_LIMIT = 30;
@@ -77,6 +78,16 @@ export class MessagingController {
     // SPRINT-36: complete upload endpoint signature
     return this.messagingService.uploadAudio(userId, file); // SPRINT-36: return URL, key, and byte size without creating a message
   } // SPRINT-36: complete audio upload endpoint
+
+  // SPRINT-51: POST /conversations/messages/:messageId/report — before :id routes
+  @Post('messages/:messageId/report')
+  async reportMessage(
+    @CurrentUser('id') userId: string,
+    @Param('messageId') messageId: string,
+    @Body() dto: ReportReasonDto,
+  ) {
+    return this.messagingService.reportMessage(userId, messageId, dto.reason);
+  }
 
   // SPRINT-27: soft-hide — DELETE /:id (distinct from GET /:id/messages, PATCH /:id/read by method + suffix)
   @Delete(':id')

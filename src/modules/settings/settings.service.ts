@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   ConflictException,
+  ForbiddenException, // SPRINT-55: refuse self-cancel of admin-initiated erasure
   Injectable,
   Logger, // SPRINT-32: session destroy warnings on immediate delete
   NotFoundException,
@@ -193,8 +194,8 @@ export class SettingsService {
             where: { conversationId: m.conversationId, userId },
             data: {
               status: 'BLOCKED',
-              blockedByUserBlock: true, // SPRINT-44: record that BLOCKED came from user-block, not decline
-            }, // SPRINT-44: same row as before; provenance only
+              blockProvenance: 'USER_BLOCK', // SPRINT-53: was blockedByUserBlock: true — user-initiated block
+            }, // SPRINT-44: same row as before; provenance only // SPRINT-53: enum
           });
         }
       }
@@ -224,7 +225,7 @@ export class SettingsService {
           // SPRINT-44
           members: {
             // SPRINT-44
-            select: { id: true, userId: true, status: true, blockedByUserBlock: true }, // SPRINT-44: need unblocker status + provenance
+            select: { id: true, userId: true, status: true, blockProvenance: true }, // SPRINT-53: was blockedByUserBlock
           }, // SPRINT-44
         }, // SPRINT-44
       }); // SPRINT-44
@@ -235,7 +236,7 @@ export class SettingsService {
         return (
           // SPRINT-44
           mine?.status === 'BLOCKED' && // SPRINT-44: status alone is insufficient
-          mine.blockedByUserBlock === true // SPRINT-44: excludes declined message/roommate requests
+          mine.blockProvenance === 'USER_BLOCK' // SPRINT-53: was blockedByUserBlock === true
         ); // SPRINT-44
       }); // SPRINT-44
 
@@ -254,7 +255,7 @@ export class SettingsService {
             await tx.conversationMember.updateMany({
               // SPRINT-44: clear provenance on unblocker's row only
               where: { conversationId: conv.id, userId }, // SPRINT-44
-              data: { blockedByUserBlock: false }, // SPRINT-44: block no longer exists; status stays BLOCKED
+              data: { blockProvenance: 'NONE' }, // SPRINT-53: was blockedByUserBlock: false — status stays BLOCKED
             }); // SPRINT-44
           } // SPRINT-44
         }); // SPRINT-44
@@ -349,7 +350,11 @@ export class SettingsService {
     deletionDate.setDate(deletionDate.getDate() + 15);
     await this.prisma.user.update({
       where: { id: userId },
-      data: { isActive: false, deletedAt: deletionDate },
+      data: {
+        isActive: false,
+        deletedAt: deletionDate,
+        deletionSource: 'SELF', // SPRINT-55: tag self-service deletion; default NONE keeps legacy rows cancellable
+      },
     });
     return {
       message: 'Account scheduled for deletion',
@@ -360,7 +365,7 @@ export class SettingsService {
   async cancelDeletion(userId: string) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: { isActive: true, deletedAt: true },
+      select: { isActive: true, deletedAt: true, deletionSource: true }, // SPRINT-55
     });
     if (
       !user ||
@@ -370,9 +375,19 @@ export class SettingsService {
     ) {
       throw new BadRequestException('No pending account deletion to cancel.');
     }
+    // SPRINT-55: refuse self-cancel of admin-initiated erasure; SELF and NONE (pre-sprint) unchanged
+    if (user.deletionSource === 'ADMIN') {
+      throw new ForbiddenException(
+        'This account deletion was initiated by an administrator and cannot be cancelled from Settings. Please contact support.',
+      );
+    }
     await this.prisma.user.update({
       where: { id: userId },
-      data: { isActive: true, deletedAt: null },
+      data: {
+        isActive: true,
+        deletedAt: null,
+        deletionSource: 'NONE', // SPRINT-55
+      },
     });
     return { message: 'Account deletion cancelled. Welcome back!' };
   }

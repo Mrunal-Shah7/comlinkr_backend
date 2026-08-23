@@ -217,6 +217,16 @@ export class MessagingGateway
       .emit('notification_created', payload); // SPRINT-45: distinct from new_message and conversation_updated
   } // SPRINT-45: complete bell-badge emission
 
+  // SPRINT-53: notify open chat screens that a message was hard-deleted by an admin
+  emitMessageRemoved(
+    conversationId: string,
+    payload: { conversationId: string; messageId: string },
+  ): void {
+    this.server
+      .to(conversationRoomName(conversationId)) // SPRINT-53: shared Sprint 36 helper
+      .emit('message_removed', payload); // SPRINT-53: contract for mobile — see SPRINT-53-NOTES.md
+  }
+
   async joinConversation(
     socketId: string,
     conversationId: string,

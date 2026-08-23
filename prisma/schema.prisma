@@ -16,6 +16,27 @@ enum Role {
   ADMIN
 }
 
+// SPRINT-55: why a user is in the Sprint 10 deletion window (NONE = not pending / legacy-compatible)
+enum DeletionSource {
+  NONE
+  SELF
+  ADMIN
+}
+
+// SPRINT-55: compliance log entry kinds
+enum PrivacyRequestType {
+  DATA_EXPORT
+  ERASURE
+}
+
+// SPRINT-55: export starts COMPLETED; erasure starts PENDING then APPROVED | REJECTED | COMPLETED
+enum PrivacyRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  COMPLETED
+}
+
 enum AuthProviderType {
   LOCAL
   GOOGLE
@@ -103,6 +124,13 @@ enum ListingReportStatus {
 enum ListingReportTargetType {
   HOUSING
   RESTAURANT
+  USER // SPRINT-51: direct user report
+  COMMUNITY_POST // SPRINT-51: feed/community post report
+  COMMUNITY_MEMBER // SPRINT-51: community-member behaviour report (targetId = user id)
+  COMMUNITY_QUESTION // SPRINT-51: community Q&A question report
+  COMMUNITY_ANSWER // SPRINT-51: community Q&A answer report
+  EVENT // SPRINT-51: event report (migrated from ContentReport string)
+  CHAT_MESSAGE // SPRINT-51: chat message report (actions deferred to Sprint 53)
 }
 
 enum CommunityQuestionCategory {
@@ -134,6 +162,13 @@ enum ConversationMemberStatus {
   PENDING
   ACCEPTED
   BLOCKED
+}
+
+// SPRINT-53: distinguish not-a-block / user-initiated block / admin chat ban (replaces boolean blockedByUserBlock)
+enum BlockProvenance {
+  NONE
+  USER_BLOCK
+  ADMIN_BAN
 }
 
 enum MessageType {
@@ -295,6 +330,7 @@ model User {
   role                 Role      @default(USER)
   isActive             Boolean   @default(true)
   deletedAt            DateTime?
+  deletionSource       DeletionSource @default(NONE) // SPRINT-55: SELF vs ADMIN pending deletion; NONE preserves pre-sprint self-cancel
   onboardingCompleted  Boolean   @default(false)
   agreementAcceptedAt  DateTime?
   termsAcceptedVersion String?   @db.VarChar(20) // SPRINT-32: server-side terms version audit
@@ -365,6 +401,15 @@ model User {
   sharedSpaces            SharedSpace[]
   sharedSpaceApplications SharedSpaceApplication[]
   sharedSpaceSaves        SharedSpaceSave[]
+  warningRecordsReceived  WarningRecord[] @relation("WarnedUser") // SPRINT-51: warnings issued against this user
+  warningRecordsIssued    WarningRecord[] @relation("WarningIssuer") // SPRINT-51: warnings issued by this admin
+  banRecordsReceived      BanRecord[]     @relation("BannedUser") // SPRINT-51: suspensions against this user
+  banRecordsIssued        BanRecord[]     @relation("BanIssuer") // SPRINT-51: suspensions issued by this admin
+  banRecordsLifted        BanRecord[]     @relation("BanLifter") // SPRINT-51: suspensions manually lifted by this admin
+  adminAuditLogs          AdminAuditLog[] // SPRINT-52: general admin activity trail
+  privacyRequestsAsTarget PrivacyRequest[] @relation("PrivacyRequestTarget") // SPRINT-55
+  privacyRequestsRequested PrivacyRequest[] @relation("PrivacyRequestRequester") // SPRINT-55
+  privacyRequestsResolved PrivacyRequest[] @relation("PrivacyRequestResolver") // SPRINT-55
 
   @@index([email])
   @@index([username])
@@ -575,6 +620,7 @@ model HousingListing {
   isFeatured     Boolean       @default(false)
   status         ListingStatus @default(AVAILABLE)
   viewsCount     Int           @default(0)
+  moderationReason String?     @db.VarChar(500) // SPRINT-54: admin rejection note visible only to listing owner
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
 
@@ -925,6 +971,7 @@ model Conversation {
   members   ConversationMember[]
   messages  Message[]
   event     Event?
+  banRecords BanRecord[] // SPRINT-53: conversation-scoped chat bans referencing this thread
 }
 
 model ConversationMember {
@@ -935,7 +982,7 @@ model ConversationMember {
   status         ConversationMemberStatus @default(PENDING)
   lastReadAt     DateTime?
   isHidden       Boolean                 @default(false) // SPRINT-27: per-user soft hide from inbox
-  blockedByUserBlock Boolean             @default(false) // SPRINT-44: provenance — BLOCKED status set by user-block action (not decline)
+  blockProvenance BlockProvenance        @default(NONE) // SPRINT-53: NONE | USER_BLOCK | ADMIN_BAN (replaced blockedByUserBlock)
   isMuted        Boolean                 @default(false) // SPRINT-45: this member's own mute of this conversation (suppresses push + bell badge only)
   joinedAt       DateTime                @default(now())
 
@@ -1149,11 +1196,77 @@ model ListingReport {
   createdAt  DateTime                @default(now())
   updatedAt  DateTime                @updatedAt
 
-  reporter User @relation(fields: [reporterId], references: [id], onDelete: Cascade)
+  reporter       User            @relation(fields: [reporterId], references: [id], onDelete: Cascade)
+  warningRecords WarningRecord[] // SPRINT-51: warnings linked back to this report
+  banRecords     BanRecord[] // SPRINT-51: bans linked back to this report
 
   @@index([targetType, targetId])
   @@index([reporterId])
   @@index([status])
+}
+
+// SPRINT-51: durable admin warning history (warnUser also continues to send a notification)
+model WarningRecord {
+  id        String   @id @default(uuid())
+  userId    String
+  adminId   String
+  reason    String
+  reportId  String?
+  createdAt DateTime @default(now())
+
+  user   User           @relation("WarnedUser", fields: [userId], references: [id], onDelete: Cascade)
+  admin  User           @relation("WarningIssuer", fields: [adminId], references: [id], onDelete: Cascade)
+  report ListingReport? @relation(fields: [reportId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([adminId])
+  @@index([reportId])
+}
+
+// SPRINT-51: durable suspension/ban history; expiry is the source of truth for automatic lifts
+model BanRecord {
+  id              String    @id @default(uuid())
+  userId          String
+  adminId         String
+  reason          String
+  reportId        String?
+  conversationId  String? // SPRINT-53: when set, this is a conversation-scoped chat ban (not account-wide)
+  durationDays    Int? // SPRINT-51: null = indefinite/manual (e.g. PATCH /admin/users without duration)
+  startedAt       DateTime  @default(now())
+  expiresAt       DateTime? // SPRINT-51: null when indefinite; cron lifts only when set and past
+  liftedAt        DateTime?
+  liftedByAdminId String? // SPRINT-51: null when the suspension-expiry cron performs the lift
+  createdAt       DateTime  @default(now())
+
+  user         User           @relation("BannedUser", fields: [userId], references: [id], onDelete: Cascade)
+  admin        User           @relation("BanIssuer", fields: [adminId], references: [id], onDelete: Cascade)
+  liftedBy     User?          @relation("BanLifter", fields: [liftedByAdminId], references: [id], onDelete: SetNull)
+  report       ListingReport? @relation(fields: [reportId], references: [id], onDelete: SetNull)
+  conversation Conversation?  @relation(fields: [conversationId], references: [id], onDelete: Cascade) // SPRINT-53
+
+  @@index([userId])
+  @@index([adminId])
+  @@index([reportId])
+  @@index([conversationId]) // SPRINT-53
+  @@index([expiresAt, liftedAt])
+}
+
+// SPRINT-52: general-purpose admin activity trail (successful mutations only)
+model AdminAuditLog {
+  id           String   @id @default(uuid())
+  adminId      String
+  httpMethod   String   @db.VarChar(16)
+  routePattern String   @db.VarChar(255)
+  targetType   String?  @db.VarChar(64)
+  targetId     String?  @db.VarChar(64)
+  reason       String?
+  createdAt    DateTime @default(now())
+
+  admin User @relation(fields: [adminId], references: [id], onDelete: Cascade)
+
+  @@index([adminId])
+  @@index([createdAt])
+  @@index([routePattern])
 }
 
 model EventAttendee {
@@ -1466,4 +1579,30 @@ model PlatformSettings {
   key       String   @unique
   value     String   // JSON-stringified value
   updatedAt DateTime @updatedAt
+}
+
+// SPRINT-55: compliance log for admin data-export and erasure; survives target user hard-delete
+model PrivacyRequest {
+  id                   String               @id @default(uuid())
+  userId               String? // SPRINT-55: nullified when user is hard-deleted; snapshot remains
+  snapshotUsername     String               @db.VarChar(120)
+  snapshotEmail        String               @db.VarChar(255)
+  type                 PrivacyRequestType
+  status               PrivacyRequestStatus
+  requestedByAdminId   String?
+  reason               String?              @db.VarChar(1000)
+  exportFileKey        String? // SPRINT-55: private storage key or inline marker
+  exportPayload        Json? // SPRINT-55: export body served only via admin-guarded download
+  resolvedAt           DateTime?
+  resolvedByAdminId    String?
+  createdAt            DateTime             @default(now())
+
+  user             User? @relation("PrivacyRequestTarget", fields: [userId], references: [id], onDelete: SetNull)
+  requestedByAdmin User? @relation("PrivacyRequestRequester", fields: [requestedByAdminId], references: [id], onDelete: SetNull)
+  resolvedByAdmin  User? @relation("PrivacyRequestResolver", fields: [resolvedByAdminId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([type])
+  @@index([status])
+  @@index([createdAt])
 }

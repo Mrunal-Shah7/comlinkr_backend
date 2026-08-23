@@ -108,16 +108,19 @@ export class MessagingService {
   private getGateway(): {
     isUserOnline(userId: string): boolean;
     emitNewMessage(conversationId: string, message: MessageResponse): void;
-    emitConversationUpdated( // SPRINT-36: expose the personal-room conversation-list emitter without a static gateway import
-      userId: string, // SPRINT-36: identify the list-update recipient
+    emitConversationUpdated(
+      userId: string,
       payload: {
-        // SPRINT-36: mirror the gateway payload contract across the circular dependency boundary
-        conversationId: string; // SPRINT-36: identify the changed conversation
-        messagePreview: string; // SPRINT-36: carry the latest preview
-        unreadCount: number; // SPRINT-36: carry recipient-specific unread state
-        updatedAt: string; // SPRINT-36: carry ordering timestamp
-      }, // SPRINT-36: complete the list-update payload
-    ): void; // SPRINT-36: complete personal-room emitter signature
+        conversationId: string;
+        messagePreview: string;
+        unreadCount: number;
+        updatedAt: string;
+      },
+    ): void;
+    emitMessageRemoved( // SPRINT-53: real-time removal broadcast
+      conversationId: string,
+      payload: { conversationId: string; messageId: string },
+    ): void;
   } | null {
     try {
       // Dynamic require avoids a circular dependency with MessagingGateway.
@@ -700,7 +703,15 @@ export class MessagingService {
       // SPRINT-44: classify most-recent existing direct against requester's own member row
       const myMember = existingDirect.members.find((m) => m.userId === userId); // SPRINT-44
       if (myMember?.status === 'BLOCKED') {
-        // SPRINT-44: retired / unusable to requester — fall through and create a brand-new conversation
+        // SPRINT-53: admin chat ban must not fall through to a fresh conversation
+        const provenance = (myMember as { blockProvenance?: string })
+          .blockProvenance;
+        if (provenance === 'ADMIN_BAN') {
+          throw new ForbiddenException(
+            'You are banned from messaging this user in this conversation.',
+          );
+        }
+        // SPRINT-44 / SPRINT-53: USER_BLOCK or NONE (retired after unblock) — fall through and create brand-new
       } else {
         // SPRINT-44: usable — return existing (and clear requester hide in returnExistingDirectConversation)
         return this.returnExistingDirectConversation(userId, existingDirect);
@@ -748,10 +759,20 @@ export class MessagingService {
         if (again) {
           // SPRINT-44: same classification on race-retry path
           const myMember = again.members.find((m) => m.userId === userId); // SPRINT-44
-          if (myMember?.status !== 'BLOCKED') {
+          if (myMember?.status === 'BLOCKED') {
+            // SPRINT-53: refuse fresh conversation when the block is an admin ban
+            const provenance = (myMember as { blockProvenance?: string })
+              .blockProvenance;
+            if (provenance === 'ADMIN_BAN') {
+              throw new ForbiddenException(
+                'You are banned from messaging this user in this conversation.',
+              );
+            }
+            // SPRINT-44 / SPRINT-53: user-block / retired — do not latch onto retired thread; rethrow
+          } else {
             // SPRINT-44: only return when usable
             return this.returnExistingDirectConversation(userId, again);
-          } // SPRINT-44: if still blocked, rethrow / do not latch onto retired thread
+          }
         }
       }
       throw e;
@@ -1130,4 +1151,260 @@ export class MessagingService {
     }); // SPRINT-45: complete idempotent mute write
     return { conversationId, isMuted }; // SPRINT-45: confirm the resulting state to the client
   } // SPRINT-45: complete per-conversation mute method
+
+  // SPRINT-51: submit a chat-message report (actions deferred; submission required for nine-type coverage)
+  async reportMessage(reporterId: string, messageId: string, reason: string) {
+    const message = await this.prisma.message.findUnique({
+      where: { id: messageId },
+      select: { id: true, senderId: true },
+    });
+    if (!message) {
+      throw new NotFoundException({
+        code: 'RESOURCE_NOT_FOUND',
+        message: 'Message not found',
+      });
+    }
+    if (message.senderId === reporterId) {
+      // SPRINT-51: self-report block
+      throw new BadRequestException('You cannot report your own message.');
+    }
+    await this.prisma.listingReport.create({
+      data: {
+        reporterId,
+        targetType: 'CHAT_MESSAGE', // SPRINT-51
+        targetId: messageId,
+        reason,
+      },
+    });
+    return { message: 'Report submitted. Our team will review it shortly.' };
+  }
+
+  // SPRINT-53: admin read — any conversation without participant membership check
+  async getConversationForAdmin(
+    conversationId: string,
+  ): Promise<ConversationResponse> {
+    const conv = await this.prisma.conversation.findUnique({
+      where: { id: conversationId },
+      include: this.directConversationInclude(),
+    });
+    if (!conv) {
+      throw new NotFoundException({
+        code: 'RESOURCE_NOT_FOUND',
+        message: 'Conversation not found',
+      });
+    }
+    // SPRINT-53: format as if viewed by the conversation creator (formatter needs a viewer id)
+    const viewerId = conv.createdById;
+    const listingTitleMap = await this.buildListingTitleMapForOne(
+      conv.contextType,
+      conv.contextId,
+    );
+    return this.formatConversation(conv, viewerId, 0, listingTitleMap);
+  }
+
+  // SPRINT-53: admin message list — same cursor contract as getMessages, no member check
+  async getMessagesForAdmin(
+    conversationId: string,
+    cursor?: string,
+    limit: number = MESSAGE_PAGE_LIMIT,
+  ): Promise<{ data: MessageResponse[]; nextCursor: string | null }> {
+    const conv = await this.prisma.conversation.findUnique({
+      where: { id: conversationId },
+      select: { id: true },
+    });
+    if (!conv) {
+      throw new NotFoundException({
+        code: 'RESOURCE_NOT_FOUND',
+        message: 'Conversation not found',
+      });
+    }
+
+    const cursorDate = cursor ? new Date(cursor) : undefined;
+    const where: { conversationId: string; createdAt?: { lt: Date } } = {
+      conversationId,
+    };
+    if (cursorDate && !isNaN(cursorDate.getTime())) {
+      where.createdAt = { lt: cursorDate };
+    }
+
+    const messages = await this.prisma.message.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      take: limit + 1,
+      include: {
+        sender: {
+          select: { id: true, username: true, fullName: true, avatarUrl: true },
+        },
+      },
+    });
+
+    const hasMore = messages.length > limit;
+    const page = hasMore ? messages.slice(0, limit) : messages;
+    const nextCursor =
+      hasMore && page.length > 0
+        ? page[page.length - 1].createdAt.toISOString()
+        : null;
+
+    const ordered = page.reverse();
+    const data = ordered.map((m) =>
+      this.formatMessage(m as any, m.senderId),
+    );
+    return { data, nextCursor };
+  }
+
+  /**
+   * SPRINT-53: shared hard-delete for admin route and REMOVE_MESSAGE action.
+   * Corrects lastMessageAt, best-effort deletes remote attachment, emits message_removed.
+   * When reportId is provided, the report is resolved in the same DB transaction.
+   */
+  async adminRemoveMessage(
+    messageId: string,
+    reportId?: string,
+  ): Promise<{ message: string; conversationId: string; messageId: string }> {
+    const existing = await this.prisma.message.findUnique({
+      where: { id: messageId },
+      select: {
+        id: true,
+        conversationId: true,
+        createdAt: true,
+        imageUrl: true,
+        type: true,
+      },
+    });
+    if (!existing) {
+      throw new NotFoundException({
+        code: 'RESOURCE_NOT_FOUND',
+        message: 'Message not found',
+      });
+    }
+
+    const conversationId = existing.conversationId;
+    const attachmentUrl = existing.imageUrl;
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.message.delete({ where: { id: messageId } });
+
+      // SPRINT-53: recompute Conversation.lastMessageAt from remaining newest message
+      const newest = await tx.message.findFirst({
+        where: { conversationId },
+        orderBy: { createdAt: 'desc' },
+        select: { createdAt: true },
+      });
+      await tx.conversation.update({
+        where: { id: conversationId },
+        data: { lastMessageAt: newest?.createdAt ?? null },
+      });
+
+      if (reportId) {
+        // SPRINT-53: resolve the report in the same transaction as the delete
+        await tx.listingReport.update({
+          where: { id: reportId },
+          data: { status: 'RESOLVED' },
+        });
+      }
+    });
+
+    // SPRINT-53: remote asset cleanup — Message has no File FK; imageUrl/audioUrl live on the row.
+    // Delete Cloudinary/S3 asset best-effort after DB commit; orphaned remotes are acceptable if destroy fails.
+    if (attachmentUrl) {
+      try {
+        await this.fileService.deleteFile(attachmentUrl);
+      } catch {
+        // SPRINT-53: swallow remote delete failure — message row is already gone
+      }
+    }
+
+    try {
+      const g = this.getGateway();
+      g?.emitMessageRemoved?.(conversationId, {
+        conversationId,
+        messageId,
+      });
+    } catch {
+      // SPRINT-53: emission must never fail the deletion (Sprint 36/45 pattern)
+    }
+
+    return {
+      message: 'Message removed.',
+      conversationId,
+      messageId,
+    };
+  }
+
+  // SPRINT-53: apply conversation-scoped chat ban on the sender's own member row
+  async adminBanFromChat(params: {
+    conversationId: string;
+    bannedUserId: string;
+    adminId: string;
+    reason: string;
+    reportId?: string;
+    durationDays?: number | null;
+  }): Promise<{ message: string }> {
+    const conversation = await this.prisma.conversation.findUnique({
+      where: { id: params.conversationId },
+      select: { id: true, type: true },
+    });
+    if (!conversation) {
+      throw new NotFoundException({
+        code: 'RESOURCE_NOT_FOUND',
+        message: 'Conversation not found',
+      });
+    }
+    if (conversation.type !== 'DIRECT') {
+      throw new BadRequestException(
+        'BAN_FROM_CHAT is only available for direct conversations.',
+      );
+    }
+
+    const member = await this.prisma.conversationMember.findUnique({
+      where: {
+        conversationId_userId: {
+          conversationId: params.conversationId,
+          userId: params.bannedUserId,
+        },
+      },
+    });
+    if (!member) {
+      throw new NotFoundException({
+        code: 'RESOURCE_NOT_FOUND',
+        message: 'Conversation member not found',
+      });
+    }
+
+    const startedAt = new Date();
+    const durationDays = params.durationDays ?? null;
+    const expiresAt =
+      durationDays != null && durationDays >= 1
+        ? new Date(startedAt.getTime() + durationDays * 24 * 60 * 60 * 1000)
+        : null;
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.conversationMember.update({
+        where: {
+          conversationId_userId: {
+            conversationId: params.conversationId,
+            userId: params.bannedUserId,
+          },
+        },
+        data: {
+          status: 'BLOCKED',
+          blockProvenance: 'ADMIN_BAN', // SPRINT-53
+        },
+      });
+      await tx.banRecord.create({
+        data: {
+          userId: params.bannedUserId,
+          adminId: params.adminId,
+          reason: params.reason,
+          reportId: params.reportId ?? null,
+          conversationId: params.conversationId, // SPRINT-53: conversation-scoped
+          durationDays,
+          startedAt,
+          expiresAt,
+        },
+      });
+    });
+
+    return { message: 'User banned from this conversation.' };
+  }
 }

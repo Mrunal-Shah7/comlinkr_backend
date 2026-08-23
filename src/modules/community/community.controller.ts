@@ -15,11 +15,36 @@ import { CommunityStatsQueryDto } from './dto/community-stats-query.dto';
 import { CreateQuestionDto } from './dto/create-question.dto';
 import { CreateAnswerDto } from './dto/create-answer.dto';
 import { VotePollDto } from './dto/vote-poll.dto';
+import { ReportReasonDto } from '../../common/dto/report-reason.dto'; // SPRINT-51
 
 @ApiTags('Community')
 @Controller('community')
 export class CommunityController {
   constructor(private readonly communityService: CommunityService) {}
+
+  // SPRINT-51: POST /community/posts/:id/report — FeedPost target; path matches mobile community.api
+  @Post('posts/:id/report')
+  @ApiOperation({ summary: 'Report a community/feed post' })
+  @ApiBody({ type: ReportReasonDto })
+  async reportPost(
+    @CurrentUser('id') userId: string,
+    @Param('id') id: string,
+    @Body() dto: ReportReasonDto,
+  ) {
+    return this.communityService.reportCommunityPost(userId, id, dto.reason);
+  }
+
+  // SPRINT-51: POST /community/members/:id/report — targetId is the member's user id
+  @Post('members/:id/report')
+  @ApiOperation({ summary: 'Report a community member' })
+  @ApiBody({ type: ReportReasonDto })
+  async reportMember(
+    @CurrentUser('id') userId: string,
+    @Param('id') id: string,
+    @Body() dto: ReportReasonDto,
+  ) {
+    return this.communityService.reportCommunityMember(userId, id, dto.reason);
+  }
 
   @Get('polls')
   @OptionalAuth()
@@ -117,6 +142,36 @@ export class CommunityController {
     @Body() dto: CreateAnswerDto,
   ) {
     return this.communityService.createAnswer(userId, id, dto);
+  }
+
+  // SPRINT-51: POST /community/questions/:id/report
+  @Post('questions/:id/report')
+  @ApiOperation({ summary: 'Report a community question' })
+  @ApiBody({ type: ReportReasonDto })
+  async reportQuestion(
+    @CurrentUser('id') userId: string,
+    @Param('id') id: string,
+    @Body() dto: ReportReasonDto,
+  ) {
+    return this.communityService.reportQuestion(userId, id, dto.reason);
+  }
+
+  // SPRINT-51: POST /community/questions/:qid/answers/:aid/report
+  @Post('questions/:questionId/answers/:answerId/report')
+  @ApiOperation({ summary: 'Report a community answer' })
+  @ApiBody({ type: ReportReasonDto })
+  async reportAnswer(
+    @CurrentUser('id') userId: string,
+    @Param('questionId') questionId: string,
+    @Param('answerId') answerId: string,
+    @Body() dto: ReportReasonDto,
+  ) {
+    return this.communityService.reportAnswer(
+      userId,
+      questionId,
+      answerId,
+      dto.reason,
+    );
   }
 
   @Post('questions/:id/upvote')

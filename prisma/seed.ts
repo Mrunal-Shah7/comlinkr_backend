@@ -178,96 +178,72 @@ async function main() {
   }
   console.log(`Seeded ${communityCount} communities`);
 
-  const adminEmail = 'admin@comlinkr.com';
-  const adminPassword = 'Admin@123456';
-  const passwordHash = await bcrypt.hash(adminPassword, 12);
+  async function seedAdminUser(
+    email: string,
+    username: string,
+    fullName: string,
+    password: string,
+  ) {
+    const passwordHash = await bcrypt.hash(password, 12);
 
-  const admin = await prisma.user.upsert({
-    where: { email: adminEmail },
-    create: {
-      email: adminEmail,
-      username: 'admin',
-      fullName: 'ComLinkr Admin',
-      role: 'ADMIN',
-      onboardingCompleted: true,
-      authProviders: {
+    const user = await prisma.user.upsert({
+      where: { email },
+      create: {
+        email,
+        username,
+        fullName,
+        role: 'ADMIN',
+        onboardingCompleted: true,
+        authProviders: {
+          create: {
+            provider: 'LOCAL',
+            passwordHash,
+          },
+        },
+      },
+      update: {
+        fullName,
+        role: 'ADMIN',
+        onboardingCompleted: true,
+      },
+      include: { authProviders: true },
+    });
+
+    if (user.authProviders.length === 0) {
+      await prisma.authProvider.upsert({
+        where: {
+          userId_provider: { userId: user.id, provider: 'LOCAL' },
+        },
         create: {
+          userId: user.id,
           provider: 'LOCAL',
           passwordHash,
         },
-      },
-    },
-    update: {},
-    include: { authProviders: true },
-  });
+        update: { passwordHash },
+      });
+    } else {
+      await prisma.authProvider.updateMany({
+        where: { userId: user.id, provider: 'LOCAL' },
+        data: { passwordHash },
+      });
+    }
 
-  if (admin.authProviders.length === 0) {
-    await prisma.authProvider.upsert({
-      where: {
-        userId_provider: { userId: admin.id, provider: 'LOCAL' },
-      },
-      create: {
-        userId: admin.id,
-        provider: 'LOCAL',
-        passwordHash,
-      },
-      update: { passwordHash },
-    });
-  } else {
-    await prisma.authProvider.updateMany({
-      where: { userId: admin.id, provider: 'LOCAL' },
-      data: { passwordHash },
-    });
+    console.log(`Seeded admin user (${email})`);
   }
 
-  console.log('Seeded 1 admin user (admin@comlinkr.com)');
+  await seedAdminUser(
+    'shahmrunal777@gmail.com',
+    'shahmrunal777',
+    'Shahm Runal',
+    'pmscrm007',
+  );
 
-  const ownerEmail = 'shahmrunal777@gmail.com';
-  const ownerPassword = 'pmscrm007';
-  const ownerPasswordHash = await bcrypt.hash(ownerPassword, 12);
-
-  const owner = await prisma.user.upsert({
-    where: { email: ownerEmail },
-    create: {
-      email: ownerEmail,
-      username: 'shahmrunal777',
-      fullName: 'Shahm Runal',
-      role: 'USER',
-      onboardingCompleted: true,
-      authProviders: {
-        create: {
-          provider: 'LOCAL',
-          passwordHash: ownerPasswordHash,
-        },
-      },
-    },
-    update: {
-      fullName: 'Shahm Runal',
-      onboardingCompleted: true,
-    },
-    include: { authProviders: true },
-  });
-
-  if (owner.authProviders.length === 0) {
-    await prisma.authProvider.upsert({
-      where: {
-        userId_provider: { userId: owner.id, provider: 'LOCAL' },
-      },
-      create: {
-        userId: owner.id,
-        provider: 'LOCAL',
-        passwordHash: ownerPasswordHash,
-      },
-      update: { passwordHash: ownerPasswordHash },
-    });
-  } else {
-    await prisma.authProvider.updateMany({
-      where: { userId: owner.id, provider: 'LOCAL' },
-      data: { passwordHash: ownerPasswordHash },
-    });
-  }
-
-  console.log(`Seeded dev user (${ownerEmail})`);
+  await seedAdminUser(
+    'Pavanbarot0610@gmail.com',
+    'pavanbarot0610',
+    'Pavan Barot',
+    'Pavan@610',
+  );
 }
 
 main()

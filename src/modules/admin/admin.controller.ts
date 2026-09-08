@@ -36,6 +36,7 @@ import { AdminSessionsQueryDto } from './dto/admin-sessions-query.dto'; // SPRIN
 import type { Request } from 'express'; // SPRINT-35: type the current express-session identifier
 import { BadgeType } from '@prisma/client'; // SPRINT-35: constrain badge revocation to persisted badge types
 import { AdminReportsQueryDto } from './dto/admin-reports-query.dto'; // SPRINT-51
+import { AdminBadgeApplicationsQueryDto } from './dto/admin-badge-applications-query.dto'; // SPRINT-57
 import { ReportActionDto } from './dto/report-action.dto'; // SPRINT-51
 import { PrivacyRequestReasonDto } from './dto/privacy-request-reason.dto'; // SPRINT-55
 import { AdminAuditInterceptor } from './admin-audit.interceptor'; // SPRINT-52
@@ -156,8 +157,19 @@ export class AdminController {
   }
 
   @Get('feed/trending')
-  getTrendingPosts(@Query('limit') limit?: string) {
-    return this.adminService.getTrendingPosts(limit ? Number(limit) : 20);
+  @ApiOperation({
+    summary:
+      'Trending feed posts, paginated with the same { data, meta } envelope as GET /admin/feed.',
+  }) // SPRINT-57
+  getTrendingPosts(
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+    @Query('limit') limit?: string, // SPRINT-57: accepted as an alias so older clients keep working
+  ) {
+    return this.adminService.getTrendingPosts({
+      page: page ? Number(page) : undefined,
+      pageSize: pageSize ? Number(pageSize) : limit ? Number(limit) : undefined,
+    });
   }
 
   @Patch('feed/:id/moderate')
@@ -502,7 +514,11 @@ export class AdminController {
   }
 
   @Get('badges/applications')
-  getBadgeApplications(@Query() query: PaginationDto) {
+  @ApiOperation({
+    summary:
+      'Badge applications. Defaults to the pending-review queue; pass status (or ALL) and search to browse reviewed history.',
+  }) // SPRINT-57
+  getBadgeApplications(@Query() query: AdminBadgeApplicationsQueryDto) {
     return this.adminService.getBadgeApplications(query);
   }
 

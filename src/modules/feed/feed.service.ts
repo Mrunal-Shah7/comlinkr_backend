@@ -21,6 +21,17 @@ import { NeighborhoodMood, Prisma } from '@prisma/client'; // SPRINT-37: type th
 import { VoteNeighborhoodMoodDto } from './dto/vote-neighborhood-mood.dto';
 import { resolveMediaUrl } from '../../common/utils/media-url'; // SPRINT-46: the one shared media URL resolver
 
+// SPRINT-57: the single author selection used by every query that feeds formatFeedPost.
+// Verification has no boolean column — it is the presence of a granted UserBadge — so the
+// badge rows must be loaded everywhere, or author.verified reports false on some routes.
+const FEED_AUTHOR_SELECT = {
+  id: true,
+  username: true,
+  fullName: true,
+  avatarUrl: true,
+  userBadges: { select: { badgeType: true } },
+} as const;
+
 const FEED_MEDIA_MAX_FILES = 6;
 const FEED_MEDIA_MAX_SIZE = 5 * 1024 * 1024;
 const FEED_MEDIA_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
@@ -60,6 +71,7 @@ export class FeedService {
       likesCount: post.likesCount,
       commentsCount: post.commentsCount,
       savesCount: post.savesCount,
+      viewsCount: post.viewsCount, // SPRINT-57
       isPublished: post.isPublished,
       createdAt: post.createdAt,
       updatedAt: post.updatedAt,
@@ -72,6 +84,12 @@ export class FeedService {
         avatarUrl: post.author.avatarUrl
           ? this.buildFileUrl(post.author.avatarUrl)
           : null,
+        // SPRINT-57: verified = holds at least one approved badge. `badges` lets the client
+        // pick the right badge art instead of a generic tick.
+        verified: (post.author.userBadges?.length ?? 0) > 0,
+        badges: (post.author.userBadges ?? []).map(
+          (b: { badgeType: string }) => b.badgeType,
+        ),
       },
       media: (post.media ?? []).map((m: any) => ({
         id: m.id,
@@ -257,7 +275,7 @@ export class FeedService {
         skip: (page - 1) * limit,
         take: limit,
         include: {
-          author: true,
+          author: { select: FEED_AUTHOR_SELECT }, // SPRINT-57
           media: true,
           likes: userId
             ? {
@@ -287,7 +305,7 @@ export class FeedService {
     const post = await this.prisma.feedPost.findUnique({
       where: { id: postId },
       include: {
-        author: true,
+        author: { select: FEED_AUTHOR_SELECT }, // SPRINT-57
         media: true,
         likes: userId
           ? {
@@ -384,7 +402,7 @@ export class FeedService {
     const created = await this.prisma.feedPost.findUnique({
       where: { id: post.id },
       include: {
-        author: true,
+        author: { select: FEED_AUTHOR_SELECT }, // SPRINT-57
         media: true,
         likes: {
           where: { userId },
@@ -478,6 +496,47 @@ export class FeedService {
     // optionally delete files for media (not strictly required for now)
 
     return { message: 'Post deleted' };
+  }
+
+  // SPRINT-57: record a unique viewer for a post. Re-viewing is a no-op, so viewsCount
+  // counts people rather than scroll events, and authors never inflate their own numbers.
+  async recordView(userId: string, postId: string) {
+    const post = await this.prisma.feedPost.findUnique({
+      where: { id: postId },
+      select: { id: true, authorId: true, viewsCount: true, isPublished: true },
+    });
+    if (!post || (!post.isPublished && post.authorId !== userId)) {
+      throw new NotFoundException({
+        code: 'RESOURCE_NOT_FOUND',
+        message: 'Post not found',
+      });
+    }
+    if (post.authorId === userId) {
+      return { viewsCount: post.viewsCount, counted: false };
+    }
+
+    try {
+      const [, updated] = await this.prisma.$transaction([
+        this.prisma.feedPostView.create({
+          data: { userId, feedPostId: postId },
+        }),
+        this.prisma.feedPost.update({
+          where: { id: postId },
+          data: { viewsCount: { increment: 1 } },
+          select: { viewsCount: true },
+        }),
+      ]);
+      return { viewsCount: updated.viewsCount, counted: true };
+    } catch (err) {
+      // P2002 = this user already has a view row; the count is already correct.
+      if (
+        err instanceof Prisma.PrismaClientKnownRequestError &&
+        err.code === 'P2002'
+      ) {
+        return { viewsCount: post.viewsCount, counted: false };
+      }
+      throw err;
+    }
   }
 
   async toggleLike(userId: string, postId: string) {
@@ -727,7 +786,7 @@ export class FeedService {
         include: {
           feedPost: {
             include: {
-              author: true,
+              author: { select: FEED_AUTHOR_SELECT }, // SPRINT-57
               media: true,
               likes: {
                 where: { userId },

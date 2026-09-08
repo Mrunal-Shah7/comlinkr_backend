@@ -1,11 +1,13 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import {
+  IsDateString,
   IsOptional,
   IsString,
   MaxLength,
   MinLength,
   Matches,
 } from 'class-validator';
+import { IsRealisticDateOfBirth } from '../../../common/validators/date-of-birth.validator'; // SPRINT-57
 import { Transform } from 'class-transformer';
 
 export class UpdateProfileDto {
@@ -56,4 +58,14 @@ export class UpdateProfileDto {
   @MaxLength(20)
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   phoneNumber?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Date of birth (ISO 8601, e.g. 1998-04-23). Age is derived from this and never stored directly.',
+    example: '1998-04-23',
+  })
+  @IsOptional()
+  @IsDateString()
+  @IsRealisticDateOfBirth() // SPRINT-57: mirrors the 18+ requirement in the Terms of Service
+  dateOfBirth?: string;
 }

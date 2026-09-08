@@ -285,6 +285,22 @@ enum SupportTicketStatus {
   CLOSED
 }
 
+// SPRINT-57: admin-selectable delivery priority, persisted per broadcast
+enum BroadcastPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+// SPRINT-57: real lifecycle state - scheduled broadcasts are dispatched later by AdminCronService
+enum BroadcastStatus {
+  DRAFT
+  SCHEDULED
+  SENT
+  FAILED
+}
+
 enum BroadcastAudienceType {
   ALL
   CITY
@@ -327,6 +343,7 @@ model User {
   avatarUrl            String?
   bio                  String?   @db.VarChar(200)
   phoneNumber          String?
+  dateOfBirth          DateTime? // SPRINT-57: date of birth is the durable source for displayed age (age itself would go stale)
   role                 Role      @default(USER)
   isActive             Boolean   @default(true)
   deletedAt            DateTime?
@@ -348,6 +365,7 @@ model User {
   feedLikes               FeedLike[]
   feedComments            FeedComment[]
   feedSaves               FeedSave[]
+  feedPostViews           FeedPostView[]        // SPRINT-57
   housingListings         HousingListing[]
   housingInterests        HousingInterest[]
   restaurants             Restaurant[]
@@ -525,6 +543,7 @@ model FeedPost {
   likesCount    Int          @default(0)
   commentsCount Int          @default(0)
   savesCount    Int          @default(0)
+  viewsCount    Int          @default(0) // SPRINT-57: denormalised unique-viewer count kept in step with FeedPostView
   isPublished   Boolean      @default(true)
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
@@ -535,6 +554,21 @@ model FeedPost {
   likes   FeedLike[]
   comments FeedComment[]
   saves   FeedSave[]
+  views   FeedPostView[] // SPRINT-57
+}
+
+// SPRINT-57: one row per viewer per post so viewsCount counts people, not scroll events
+model FeedPostView {
+  id         String   @id @default(uuid())
+  userId     String
+  feedPostId String
+  createdAt  DateTime @default(now())
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  feedPost FeedPost @relation(fields: [feedPostId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, feedPostId])
+  @@index([feedPostId])
 }
 
 model FeedPostMedia {
@@ -1100,12 +1134,18 @@ model BroadcastNotification {
   audienceCity    String?
   audienceUserIds String[]
   recipientCount  Int                   @default(0)
+  priority        BroadcastPriority     @default(NORMAL) // SPRINT-57
+  status          BroadcastStatus       @default(SENT)   // SPRINT-57: existing rows are all already-sent broadcasts
+  scheduledFor    DateTime?             // SPRINT-57: null = send immediately
+  sentAt          DateTime?             // SPRINT-57: when dispatch actually happened
+  failureReason   String?               // SPRINT-57: populated when status = FAILED
   createdAt       DateTime              @default(now())
 
   sentBy User @relation(fields: [sentById], references: [id], onDelete: Cascade)
 
   @@index([sentById])
   @@index([createdAt])
+  @@index([status, scheduledFor]) // SPRINT-57: cron scans due scheduled broadcasts
 }
 
 model SupportTicket {
@@ -1491,6 +1531,7 @@ model Notification {
   @@index([userId])
   @@index([isRead])
   @@index([userId, createdAt(sort: Desc)])
+  @@index([referenceType, referenceId]) // SPRINT-57: open-rate aggregation per broadcast
 }
 
 model NewsArticleLike {

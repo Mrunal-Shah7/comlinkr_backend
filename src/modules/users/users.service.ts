@@ -10,6 +10,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 import { ExpoNotificationService } from '../notifications/expo-notification.service';
 import { UpdateProfileDto } from './dto/update-profile.dto';
+import { computeAge } from '../../common/utils/age'; // SPRINT-57
 import { CreateSupportTicketDto } from './dto/create-support-ticket.dto';
 import { AchievementDto, UserStatsDto } from './dto/user-response.dto';
 import { resolveMediaUrl } from '../../common/utils/media-url'; // SPRINT-46: the one shared media URL resolver
@@ -157,6 +158,7 @@ export class UsersService {
       avatarUrl: string | null;
       bio: string | null;
       phoneNumber: string | null;
+      dateOfBirth: Date | null; // SPRINT-57
       role: string;
       onboardingCompleted: boolean;
       createdAt: Date;
@@ -216,6 +218,8 @@ export class UsersService {
       avatarUrl: this.buildAvatarUrl(user.avatarUrl),
       bio: user.bio,
       phoneNumber: user.phoneNumber,
+      dateOfBirth: user.dateOfBirth, // SPRINT-57
+      age: computeAge(user.dateOfBirth), // SPRINT-57: derived, never persisted
       role: user.role,
       onboardingDone: user.onboardingCompleted,
       createdAt: user.createdAt,
@@ -398,6 +402,8 @@ export class UsersService {
     if (dto.username !== undefined) data.username = dto.username;
     if (dto.bio !== undefined) data.bio = dto.bio;
     if (dto.phoneNumber !== undefined) data.phoneNumber = dto.phoneNumber;
+    if (dto.dateOfBirth !== undefined)
+      data.dateOfBirth = new Date(dto.dateOfBirth); // SPRINT-57
 
     if (Object.keys(data).length > 0) {
       await this.prisma.user.update({

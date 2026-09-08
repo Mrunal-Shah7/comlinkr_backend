@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { PrismaService } from '../../prisma/prisma.service';
+import { AdminService } from './admin.service'; // SPRINT-57: reuse the single broadcast dispatch path
 
 // SPRINT-51: lift expired suspensions without interfering with the Sprint 10 deletion window
 // SPRINT-53: also lift conversation-scoped chat bans without touching User.isActive
@@ -8,7 +9,36 @@ import { PrismaService } from '../../prisma/prisma.service';
 export class AdminCronService {
   private readonly logger = new Logger(AdminCronService.name);
 
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly adminService: AdminService, // SPRINT-57
+  ) {}
+
+  // SPRINT-57: dispatch broadcasts whose scheduledFor has passed. Runs every minute so the
+  // delivery time stays close to what the admin picked.
+  @Cron('* * * * *')
+  async handleScheduledBroadcasts() {
+    const due = await this.adminService.findDueScheduledBroadcasts(new Date());
+    if (due.length === 0) return;
+
+    let sent = 0;
+    for (const broadcast of due) {
+      try {
+        // dispatchBroadcast marks the row FAILED itself before rethrowing, so a bad
+        // broadcast is not retried forever on every tick.
+        await this.adminService.dispatchBroadcast(broadcast.id);
+        sent++;
+      } catch (err) {
+        this.logger.warn(
+          `Failed to dispatch broadcast ${broadcast.id}: ${err}`,
+        );
+      }
+    }
+
+    if (sent > 0) {
+      this.logger.log(`Scheduled broadcasts: dispatched ${sent}.`);
+    }
+  }
 
   // SPRINT-51: every 15 minutes — find expired, unlifted ban records and restore when safe
   @Cron('*/15 * * * *')

@@ -9,6 +9,7 @@ import session from 'express-session';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { RedisService } from './redis/redis.service';
 import { getSessionOptions } from './config/session.config';
+import { registerDeepLinkRoutes } from './deep-links'; // SPRINT-57
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
 import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 
@@ -19,6 +20,10 @@ async function bootstrap() {
   const redisClient = redisService.getClient();
   app.use(session(getSessionOptions(redisClient)));
   app.useWebSocketAdapter(new IoAdapter(app));
+
+  // SPRINT-57: registered before the global prefix so /.well-known/* and /app/* are served raw
+  // (no `api` prefix, no guards, and no TransformInterceptor envelope around the JSON).
+  registerDeepLinkRoutes(app);
 
   app.setGlobalPrefix('api');
   app.use(

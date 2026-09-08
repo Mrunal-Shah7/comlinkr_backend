@@ -1,0 +1,57 @@
+name: Deploy Comlinkr Backend
+
+on:
+  push:
+    branches:
+      - main
+
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy to VPS
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+
+          script: |
+            set -e
+
+            echo "================================"
+            echo "Starting Comlinkr Backend deployment"
+            echo "================================"
+
+            export PATH="$HOME/.local/bin:$PATH"
+
+            echo "Node: $(node --version)"
+            echo "pnpm: $(pnpm --version)"
+            echo "PM2: $(pm2 --version)"
+
+            cd /var/www/comlinkr_backend
+
+            echo "Pulling latest code..."
+            git pull origin main
+
+            echo "Installing dependencies..."
+            pnpm install
+
+            echo "Deploying database migrations..."
+            pnpm migrate:deploy
+
+            echo "Generating Prisma client..."
+            pnpm generate
+
+            echo "Building NestJS application..."
+            pnpm build
+
+            echo "Restarting PM2..."
+            pm2 restart comlinkr-api
+
+            echo "================================"
+            echo "Deployment completed successfully"
+            echo "================================"

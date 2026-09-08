@@ -183,6 +183,16 @@ export class FeedController {
     return this.feedService.deleteFeedPost(userId, id);
   }
 
+  @Post(':id/view')
+  @ApiOperation({ summary: 'Record that the current user viewed this post' })
+  @ApiResponse({
+    status: 200,
+    description: 'Current unique view count and whether this call counted',
+  })
+  async recordView(@CurrentUser('id') userId: string, @Param('id') id: string) {
+    return this.feedService.recordView(userId, id);
+  }
+
   @Post(':id/like')
   @ApiOperation({ summary: 'Toggle like on a post' })
   @ApiResponse({ status: 200, description: 'Like state and count' })

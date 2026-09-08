@@ -1,6 +1,7 @@
-import { BroadcastAudienceType } from '@prisma/client';
+import { BroadcastAudienceType, BroadcastPriority } from '@prisma/client';
 import {
   IsArray,
+  IsDateString,
   IsEnum,
   IsNotEmpty,
   IsOptional,
@@ -31,4 +32,14 @@ export class SendBroadcastDto {
   @IsArray()
   @IsUUID('4', { each: true })
   audienceUserIds?: string[];
+
+  // SPRINT-57: persisted per broadcast and echoed back by the admin history endpoint
+  @IsOptional()
+  @IsEnum(BroadcastPriority)
+  priority?: BroadcastPriority;
+
+  // SPRINT-57: a future timestamp defers dispatch to AdminCronService; past/absent sends now
+  @IsOptional()
+  @IsDateString()
+  scheduledFor?: string;
 }

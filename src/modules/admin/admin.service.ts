@@ -5,8 +5,11 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import {
+  BadgeApplicationStatus, // SPRINT-57
   BadgeType,
   BroadcastAudienceType,
+  BroadcastPriority, // SPRINT-57
+  BroadcastStatus, // SPRINT-57
   FeedCategory,
   ListingReportTargetType, // SPRINT-51
   ListingStatus,
@@ -21,15 +24,16 @@ import { ExpoNotificationService } from '../notifications/expo-notification.serv
 import { MessagingService } from '../messaging/messaging.service'; // SPRINT-53
 import { StorageService } from '../storage/storage.service'; // SPRINT-54: mirror stories cron file cleanup
 import { createPaginationMeta } from '../../common/dto/pagination.dto';
+import { computeAge } from '../../common/utils/age'; // SPRINT-57
 import { randomUUID } from 'crypto'; // SPRINT-55
 import { ConfigService } from '@nestjs/config'; // SPRINT-35: resolve the configured session lifetime for activity approximation
 import { RedisService } from '../../redis/redis.service'; // SPRINT-35: enumerate and terminate Redis-backed sessions
-import type { PaginationDto } from '../../common/dto/pagination.dto';
 import type { AdminUsersQueryDto } from './dto/admin-users-query.dto';
 import type { UpdateUserAdminDto } from './dto/update-user-admin.dto';
 import type { AdminContentQueryDto } from './dto/admin-content-query.dto';
 import type { ModerateContentDto } from './dto/moderate-content.dto';
 import type { ReviewBadgeApplicationDto } from './dto/review-badge-application.dto';
+import type { AdminBadgeApplicationsQueryDto } from './dto/admin-badge-applications-query.dto'; // SPRINT-57
 import type { UpdatePlatformSettingsDto } from './dto/update-platform-settings.dto';
 import type { CreateAdminPollDto } from './dto/create-admin-poll.dto';
 import type { SendBroadcastDto } from './dto/send-broadcast.dto';
@@ -845,24 +849,54 @@ export class AdminService {
     return { message: `Content ${dto.action}d successfully` };
   }
 
-  async getBadgeApplications(query: PaginationDto) {
+  async getBadgeApplications(query: AdminBadgeApplicationsQueryDto) {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
     const skip = (page - 1) * limit;
+
+    // SPRINT-57: an omitted status keeps the original pending-review queue, so the existing
+    // admin screen is unaffected; ALL or a specific status opens up the reviewed history.
+    const where: Prisma.BadgeApplicationWhereInput = {};
+    if (!query.status) {
+      where.status = BadgeApplicationStatus.PENDING;
+    } else if (query.status !== 'ALL') {
+      where.status = query.status;
+    }
+
+    if (query.search) {
+      const contains = { contains: query.search, mode: 'insensitive' } as const;
+      where.OR = [
+        { fullLegalName: contains },
+        { applicant: { fullName: contains } },
+        { applicant: { username: contains } },
+        { applicant: { email: contains } },
+      ];
+    }
+
+    // Reviewed applications are most useful newest-first; the pending queue stays
+    // oldest-first so the longest-waiting applicant is still reviewed next.
+    const orderBy: Prisma.BadgeApplicationOrderByWithRelationInput =
+      where.status === BadgeApplicationStatus.PENDING
+        ? { createdAt: 'asc' }
+        : { createdAt: 'desc' };
+
     const [items, total] = await Promise.all([
       this.prisma.badgeApplication.findMany({
-        where: { status: 'PENDING' },
-        orderBy: { createdAt: 'asc' },
+        where,
+        orderBy,
         skip,
         take: limit,
         include: {
           applicant: {
             select: { id: true, username: true, fullName: true, email: true },
           },
+          reviewer: {
+            select: { id: true, username: true, fullName: true },
+          }, // SPRINT-57: who actioned it, for the reviewed history
           documents: true,
         },
       }),
-      this.prisma.badgeApplication.count({ where: { status: 'PENDING' } }),
+      this.prisma.badgeApplication.count({ where }),
     ]);
     const data = items.map((a) => ({
       ...a,
@@ -1018,6 +1052,24 @@ export class AdminService {
     });
   }
 
+  /**
+   * SPRINT-57: lifetime report counts for a set of targets, resolved in one grouped query.
+   * ListingReport is the authoritative report table since the Sprint 51 ContentReport
+   * migration, so counts must come from there.
+   */
+  private async getReportCounts(
+    targetTypes: ListingReportTargetType[],
+    targetIds: string[],
+  ): Promise<Map<string, number>> {
+    if (targetIds.length === 0) return new Map();
+    const grouped = await this.prisma.listingReport.groupBy({
+      by: ['targetId'],
+      where: { targetType: { in: targetTypes }, targetId: { in: targetIds } },
+      _count: { _all: true },
+    });
+    return new Map(grouped.map((g) => [g.targetId, g._count._all]));
+  }
+
   async getFeedPosts(query: {
     page?: number;
     pageSize?: number;
@@ -1058,17 +1110,63 @@ export class AdminService {
       }),
       this.prisma.feedPost.count({ where }),
     ]);
-    return { data, meta: createPaginationMeta(page, pageSize, total) };
+
+    const reportCounts = await this.getReportCounts(
+      [ListingReportTargetType.COMMUNITY_POST],
+      data.map((p) => p.id),
+    ); // SPRINT-57
+    return {
+      data: data.map((p) => ({
+        ...p,
+        reportCount: reportCounts.get(p.id) ?? 0, // SPRINT-57
+      })),
+      meta: createPaginationMeta(page, pageSize, total),
+    };
   }
 
-  async getTrendingPosts(limit = 20) {
-    return this.prisma.feedPost.findMany({
-      take: limit,
-      orderBy: [{ likesCount: 'desc' }, { commentsCount: 'desc' }],
-      include: {
-        author: { select: { id: true, username: true, fullName: true } },
-      },
-    });
+  /**
+   * SPRINT-57: now paginated with the same { data, meta } envelope as getFeedPosts.
+   * This replaces the previous bare-array response, so clients must read `.data`.
+   */
+  async getTrendingPosts(query: { page?: number; pageSize?: number } = {}) {
+    const page = query.page ?? 1;
+    const pageSize = query.pageSize ?? 20;
+    const skip = (page - 1) * pageSize;
+
+    const [data, total] = await Promise.all([
+      this.prisma.feedPost.findMany({
+        orderBy: [
+          { viewsCount: 'desc' }, // SPRINT-57: reach first, now that it is measured
+          { likesCount: 'desc' },
+          { commentsCount: 'desc' },
+        ],
+        skip,
+        take: pageSize,
+        include: {
+          author: {
+            select: {
+              id: true,
+              username: true,
+              fullName: true,
+              avatarUrl: true,
+            },
+          },
+        },
+      }),
+      this.prisma.feedPost.count(),
+    ]);
+
+    const reportCounts = await this.getReportCounts(
+      [ListingReportTargetType.COMMUNITY_POST],
+      data.map((p) => p.id),
+    ); // SPRINT-57
+    return {
+      data: data.map((p) => ({
+        ...p,
+        reportCount: reportCounts.get(p.id) ?? 0, // SPRINT-57
+      })),
+      meta: createPaginationMeta(page, pageSize, total),
+    };
   }
 
   async moderateFeedPost(
@@ -1668,7 +1766,10 @@ export class AdminService {
         where,
         include: {
           user: {
-            include: { location: true },
+            include: {
+              location: true,
+              userBadges: { select: { badgeType: true } }, // SPRINT-57: verification is badge presence
+            },
           },
         },
         orderBy: { user: { createdAt: 'desc' } },
@@ -1677,7 +1778,56 @@ export class AdminService {
       }),
       this.prisma.roommatePreferences.count({ where }),
     ]);
-    return { data, meta: createPaginationMeta(page, pageSize, total) };
+
+    // SPRINT-57: a "match" is a mutual roommate save — both users saved each other. That is
+    // the only definition the existing data supports, and it is resolved for the whole page
+    // in two queries instead of one pair per row.
+    const userIds = data.map((row) => row.userId);
+    const [outgoing, incoming] = userIds.length
+      ? await Promise.all([
+          this.prisma.roommateSave.findMany({
+            where: { userId: { in: userIds } },
+            select: { userId: true, savedUserId: true },
+          }),
+          this.prisma.roommateSave.findMany({
+            where: { savedUserId: { in: userIds } },
+            select: { userId: true, savedUserId: true },
+          }),
+        ])
+      : [[], []];
+
+    const savedByPageUser = new Set(
+      outgoing.map((s) => `${s.userId}|${s.savedUserId}`),
+    );
+    const matchCounts = new Map<string, number>();
+    for (const save of incoming) {
+      // save.userId saved save.savedUserId (a user on this page); it is a match only if
+      // that page user saved them back.
+      if (savedByPageUser.has(`${save.savedUserId}|${save.userId}`)) {
+        matchCounts.set(
+          save.savedUserId,
+          (matchCounts.get(save.savedUserId) ?? 0) + 1,
+        );
+      }
+    }
+
+    // SPRINT-57: both report types target a user id, so they aggregate together.
+    const reportCounts = await this.getReportCounts(
+      [ListingReportTargetType.USER, ListingReportTargetType.COMMUNITY_MEMBER],
+      userIds,
+    );
+
+    return {
+      data: data.map((row) => ({
+        ...row,
+        age: computeAge(row.user.dateOfBirth), // SPRINT-57: derived from dateOfBirth
+        matchCount: matchCounts.get(row.userId) ?? 0, // SPRINT-57
+        reportCount: reportCounts.get(row.userId) ?? 0, // SPRINT-57
+        verified: row.user.userBadges.length > 0, // SPRINT-57
+        badges: row.user.userBadges.map((b) => b.badgeType), // SPRINT-57
+      })),
+      meta: createPaginationMeta(page, pageSize, total),
+    };
   }
 
   async suspendRoommateProfile(
@@ -1965,55 +2115,26 @@ export class AdminService {
 
   async sendBroadcast(adminUserId: string, dto: SendBroadcastDto) {
     await this.assertActiveAdmin(adminUserId); // SPRINT-35: enforce active ADMIN role before sending a broadcast
-    let recipientCount = 0;
-    if (dto.audienceType === BroadcastAudienceType.ALL) {
-      recipientCount = await this.expoNotificationService.sendToAll(
-        dto.title,
-        dto.body,
-      );
-    } else if (dto.audienceType === BroadcastAudienceType.CITY) {
-      if (!dto.audienceCity)
-        throw new BadRequestException('audienceCity is required for CITY');
-      recipientCount = await this.expoNotificationService.sendToCity(
-        dto.audienceCity,
-        dto.title,
-        dto.body,
-      );
-      const cityUsers = await this.prisma.user.findMany({
-        where: {
-          location: { city: { equals: dto.audienceCity, mode: 'insensitive' } },
-        },
-        select: { id: true },
-      });
-      await this.prisma.notification.createMany({
-        data: cityUsers.map((user) => ({
-          userId: user.id,
-          type: NotificationType.SYSTEM,
-          title: dto.title,
-          body: dto.body,
-        })),
-      });
-    } else {
-      if (!dto.audienceUserIds || dto.audienceUserIds.length === 0) {
-        throw new BadRequestException(
-          'audienceUserIds is required for SELECTIVE',
-        );
-      }
-      recipientCount = await this.expoNotificationService.sendToUsers(
-        dto.audienceUserIds,
-        dto.title,
-        dto.body,
-      );
-      await this.prisma.notification.createMany({
-        data: dto.audienceUserIds.map((userId) => ({
-          userId,
-          type: NotificationType.SYSTEM,
-          title: dto.title,
-          body: dto.body,
-        })),
-      });
+
+    if (dto.audienceType === BroadcastAudienceType.CITY && !dto.audienceCity) {
+      throw new BadRequestException('audienceCity is required for CITY');
     }
-    return this.prisma.broadcastNotification.create({
+    if (
+      dto.audienceType === BroadcastAudienceType.SELECTIVE &&
+      (!dto.audienceUserIds || dto.audienceUserIds.length === 0)
+    ) {
+      throw new BadRequestException(
+        'audienceUserIds is required for SELECTIVE',
+      );
+    }
+
+    const scheduledFor = dto.scheduledFor ? new Date(dto.scheduledFor) : null;
+    const isDeferred =
+      scheduledFor !== null && scheduledFor.getTime() > Date.now();
+
+    // SPRINT-57: the row is created first so the in-app fan-out can reference it, which is
+    // what makes the open rate computable afterwards.
+    const broadcast = await this.prisma.broadcastNotification.create({
       data: {
         title: dto.title,
         body: dto.body,
@@ -2021,8 +2142,121 @@ export class AdminService {
         audienceType: dto.audienceType,
         audienceCity: dto.audienceCity ?? null,
         audienceUserIds: dto.audienceUserIds ?? [],
-        recipientCount,
+        priority: dto.priority ?? BroadcastPriority.NORMAL, // SPRINT-57
+        scheduledFor, // SPRINT-57
+        status: isDeferred ? BroadcastStatus.SCHEDULED : BroadcastStatus.DRAFT, // SPRINT-57
+        recipientCount: 0,
       },
+    });
+
+    // SPRINT-57: future-dated broadcasts are dispatched later by AdminCronService.
+    if (isDeferred) return broadcast;
+
+    return this.dispatchBroadcast(broadcast.id);
+  }
+
+  /**
+   * SPRINT-57: the one dispatch path, shared by immediate sends and the scheduled cron.
+   *
+   * Behaviour change: ALL-audience broadcasts now also create in-app Notification rows
+   * (previously they were push-only). Without those rows an ALL broadcast has neither a
+   * denominator nor a read signal, so its open rate could only ever be null.
+   *
+   * recipientCount is the size of the in-app fan-out — the same denominator the open rate
+   * uses — rather than the push-delivery count, which varies with registered devices.
+   */
+  async dispatchBroadcast(broadcastId: string) {
+    const broadcast = await this.prisma.broadcastNotification.findUnique({
+      where: { id: broadcastId },
+    });
+    if (!broadcast) throw new NotFoundException('Broadcast not found');
+    if (broadcast.status === BroadcastStatus.SENT) return broadcast;
+
+    try {
+      let recipientIds: string[] = [];
+
+      if (broadcast.audienceType === BroadcastAudienceType.ALL) {
+        await this.expoNotificationService.sendToAll(
+          broadcast.title,
+          broadcast.body,
+        );
+        const users = await this.prisma.user.findMany({
+          where: { isActive: true, deletedAt: null },
+          select: { id: true },
+        });
+        recipientIds = users.map((u) => u.id);
+      } else if (broadcast.audienceType === BroadcastAudienceType.CITY) {
+        const city = broadcast.audienceCity as string;
+        await this.expoNotificationService.sendToCity(
+          city,
+          broadcast.title,
+          broadcast.body,
+        );
+        const cityUsers = await this.prisma.user.findMany({
+          where: {
+            isActive: true,
+            deletedAt: null,
+            location: { city: { equals: city, mode: 'insensitive' } },
+          },
+          select: { id: true },
+        });
+        recipientIds = cityUsers.map((u) => u.id);
+      } else {
+        recipientIds = broadcast.audienceUserIds;
+        await this.expoNotificationService.sendToUsers(
+          recipientIds,
+          broadcast.title,
+          broadcast.body,
+        );
+      }
+
+      // SPRINT-57: chunked so an ALL broadcast on a large user base does not build one
+      // enormous INSERT. referenceId is what ties these rows back for the open rate.
+      const NOTIFICATION_CHUNK = 1000;
+      for (let i = 0; i < recipientIds.length; i += NOTIFICATION_CHUNK) {
+        await this.prisma.notification.createMany({
+          data: recipientIds.slice(i, i + NOTIFICATION_CHUNK).map((userId) => ({
+            userId,
+            type: NotificationType.SYSTEM,
+            title: broadcast.title,
+            body: broadcast.body,
+            referenceType: 'BROADCAST',
+            referenceId: broadcast.id,
+          })),
+        });
+      }
+
+      return this.prisma.broadcastNotification.update({
+        where: { id: broadcast.id },
+        data: {
+          status: BroadcastStatus.SENT,
+          sentAt: new Date(),
+          recipientCount: recipientIds.length,
+          failureReason: null,
+        },
+      });
+    } catch (err) {
+      await this.prisma.broadcastNotification.update({
+        where: { id: broadcast.id },
+        data: {
+          status: BroadcastStatus.FAILED,
+          failureReason:
+            err instanceof Error ? err.message.slice(0, 500) : 'Unknown error',
+        },
+      });
+      throw err;
+    }
+  }
+
+  /** SPRINT-57: scheduled broadcasts whose time has come, oldest first. */
+  async findDueScheduledBroadcasts(now: Date) {
+    return this.prisma.broadcastNotification.findMany({
+      where: {
+        status: BroadcastStatus.SCHEDULED,
+        scheduledFor: { lte: now, not: null },
+      },
+      orderBy: { scheduledFor: 'asc' },
+      select: { id: true },
     });
   }
 
@@ -2041,7 +2275,51 @@ export class AdminService {
       }),
       this.prisma.broadcastNotification.count(),
     ]);
-    return { data, meta: createPaginationMeta(page, pageSize, total) };
+
+    // SPRINT-57: open rate = in-app notifications read / notifications delivered, resolved
+    // for the whole page in two grouped queries rather than one pair per row.
+    const ids = data.map((b) => b.id);
+    const [delivered, read] = ids.length
+      ? await Promise.all([
+          this.prisma.notification.groupBy({
+            by: ['referenceId'],
+            where: { referenceType: 'BROADCAST', referenceId: { in: ids } },
+            _count: { _all: true },
+          }),
+          this.prisma.notification.groupBy({
+            by: ['referenceId'],
+            where: {
+              referenceType: 'BROADCAST',
+              referenceId: { in: ids },
+              isRead: true,
+            },
+            _count: { _all: true },
+          }),
+        ])
+      : [[], []];
+
+    const deliveredBy = new Map(
+      delivered.map((r) => [r.referenceId as string, r._count._all]),
+    );
+    const readBy = new Map(
+      read.map((r) => [r.referenceId as string, r._count._all]),
+    );
+
+    return {
+      data: data.map((b) => {
+        const deliveredCount = deliveredBy.get(b.id) ?? 0;
+        return {
+          ...b,
+          // null (not 0) when there is nothing to measure, so the UI hides the stat
+          // instead of claiming a 0% open rate.
+          openRate:
+            deliveredCount > 0
+              ? Math.round(((readBy.get(b.id) ?? 0) / deliveredCount) * 100)
+              : null,
+        };
+      }),
+      meta: createPaginationMeta(page, pageSize, total),
+    };
   }
 
   async getSupportTickets(query: {

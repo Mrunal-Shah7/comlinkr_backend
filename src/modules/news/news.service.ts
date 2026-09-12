@@ -21,6 +21,19 @@ import {
 } from './google-news-rss.util';
 import { resolveMediaUrl } from '../../common/utils/media-url'; // SPRINT-46: the one shared media URL resolver
 
+interface CacheEntry {
+  ts: number;
+  phase: 'primary' | 'full';
+  cachedAt: string;
+  data: RssNewsArticle[];
+}
+
+/** SPRINT-58: what a feed build returns, so callers never re-read the shared cache. */
+interface BuiltFeed {
+  data: RssNewsArticle[];
+  cachedAt: string;
+}
+
 export interface NewsExplorePayload {
   data: RssNewsArticle[];
   cachedAt: string;
@@ -34,17 +47,23 @@ export interface NewsExplorePayload {
 @Injectable()
 export class NewsService {
   private readonly logger = new Logger(NewsService.name);
-  private readonly cache = new Map<
-    string,
-    {
-      ts: number;
-      phase: 'primary' | 'full';
-      cachedAt: string;
-      data: RssNewsArticle[];
-    }
-  >();
+  private readonly cache = new Map<string, CacheEntry>();
   private readonly ttlMs = 5 * 60 * 1000;
   private readonly primaryTtlMs = 3 * 60 * 1000;
+  /**
+   * SPRINT-58: an empty result is almost always a transient upstream failure — Google
+   * rate-limiting the RSS endpoint, or a timeout. Caching that for the full TTL blanks
+   * the feed for every user of the location until it expires, so empties are held only
+   * briefly. Short enough to recover quickly, long enough that a failing upstream is not
+   * hammered once per request.
+   */
+  private readonly emptyTtlMs = 30 * 1000;
+  /**
+   * SPRINT-58: single-flight guard. A cold cache key used to let every concurrent
+   * request fan out its own ~11 Google News RSS fetches; now the first caller does the
+   * work and the rest await the same promise.
+   */
+  private readonly inflight = new Map<string, Promise<BuiltFeed>>();
   private readonly activeLocations: string[] = [];
   private readonly activeLocationsSet = new Set<string>();
   constructor(
@@ -63,9 +82,9 @@ export class NewsService {
     const c = (city || 'Los Angeles').trim();
     const co = (country || 'United States').trim();
     this.trackActiveLocation(c, co);
-    const cacheKey = `${c.toLowerCase()}|${co.toLowerCase()}|${(state ?? '').toLowerCase()}`; // SPRINT-30
+    const cacheKey = this.fullCacheKey(c, co, state); // SPRINT-30
     const hit = this.cache.get(cacheKey);
-    if (!force && hit && Date.now() - hit.ts < this.ttlMs) {
+    if (!force && this.isFresh(hit, this.ttlMs)) {
       return this.toPagedPayload(
         hit.data,
         hit.cachedAt,
@@ -75,6 +94,116 @@ export class NewsService {
       );
     }
 
+    // SPRINT-58: concurrent misses on one key now share a single upstream fan-out.
+    const built = await this.singleFlight(cacheKey, () =>
+      this.buildFullFeed(c, co, state, force, cacheKey),
+    );
+    return this.toPagedPayload(
+      built.data,
+      built.cachedAt,
+      'full',
+      page,
+      pageSize,
+    );
+  }
+
+  async getExploreFeedPrimary(
+    city: string,
+    country: string,
+    page = 1,
+    pageSize = 20,
+    force = false,
+    state?: string, // SPRINT-30
+  ): Promise<NewsExplorePayload> {
+    const c = (city || 'Los Angeles').trim();
+    const co = (country || 'United States').trim();
+    this.trackActiveLocation(c, co);
+    const cacheKey = `primary:${this.fullCacheKey(c, co, state)}`; // SPRINT-30
+    const hit = this.cache.get(cacheKey);
+    if (!force && this.isFresh(hit, this.primaryTtlMs)) {
+      return this.toPagedPayload(
+        hit.data,
+        hit.cachedAt,
+        'primary',
+        page,
+        pageSize,
+      );
+    }
+
+    // SPRINT-58: when the full feed is already warm — the cron keeps it warm for every
+    // active location — first paint costs no upstream fetch at all. The full feed is a
+    // superset of primary and is ordered local-first, so its head is the same mix.
+    // Only a non-empty full feed stands in for primary; falling back to an empty one
+    // would hand the user a blank feed when primary's own fetch might still succeed.
+    const fullHit = this.cache.get(this.fullCacheKey(c, co, state));
+    if (
+      !force &&
+      this.isFresh(fullHit, this.ttlMs) &&
+      fullHit.data.length > 0
+    ) {
+      return this.toPagedPayload(
+        fullHit.data,
+        fullHit.cachedAt,
+        'primary',
+        page,
+        pageSize,
+      );
+    }
+
+    const built = await this.singleFlight(cacheKey, () =>
+      this.buildPrimaryFeed(c, co, state, force, cacheKey),
+    );
+    return this.toPagedPayload(
+      built.data,
+      built.cachedAt,
+      'primary',
+      page,
+      pageSize,
+    );
+  }
+
+  /**
+   * SPRINT-58: de-duplicates concurrent cache misses. Without this, one cold key served
+   * to N simultaneous users triggered N x ~11 outbound Google News RSS requests — the
+   * fan-out that saturated the server and pushed first paint past 20s.
+   */
+  private async singleFlight(
+    key: string,
+    build: () => Promise<BuiltFeed>,
+  ): Promise<BuiltFeed> {
+    const pending = this.inflight.get(key);
+    if (pending) return pending;
+    const promise = build().finally(() => {
+      this.inflight.delete(key);
+    });
+    this.inflight.set(key, promise);
+    return promise;
+  }
+
+  /**
+   * SPRINT-58: a cache entry is fresh within its TTL, except an empty one, which expires
+   * on the much shorter empty TTL.
+   */
+  private isFresh(
+    entry: CacheEntry | undefined,
+    ttlMs: number,
+  ): entry is CacheEntry {
+    if (!entry) return false;
+    const ttl = entry.data.length > 0 ? ttlMs : this.emptyTtlMs;
+    return Date.now() - entry.ts < ttl;
+  }
+
+  private fullCacheKey(city: string, country: string, state?: string): string {
+    return `${city.toLowerCase()}|${country.toLowerCase()}|${(state ?? '').toLowerCase()}`;
+  }
+
+  private async buildFullFeed(
+    c: string,
+    co: string,
+    state: string | undefined,
+    force: boolean,
+    cacheKey: string,
+  ): Promise<BuiltFeed> {
     const geo = this.resolveGeoCountry(co);
     const timeBucket = getTimeBucket();
     // When force refresh is requested, rotate queries much faster so repeated pulls
@@ -156,20 +285,16 @@ export class NewsService {
         );
       });
 
-    return this.toPagedPayload(unique, cachedAt, 'full', page, pageSize);
+    return { data: unique, cachedAt };
   }
 
-  async getExploreFeedPrimary(
-    city: string,
-    country: string,
-    page = 1,
-    pageSize = 20,
-    force = false,
-    state?: string, // SPRINT-30
-  ): Promise<NewsExplorePayload> {
-    const c = (city || 'Los Angeles').trim();
-    const co = (country || 'United States').trim();
-    this.trackActiveLocation(c, co);
+  private async buildPrimaryFeed(
+    c: string,
+    co: string,
+    state: string | undefined,
+    force: boolean,
+    cacheKey: string,
+  ): Promise<BuiltFeed> {
     const geo = this.resolveGeoCountry(co);
     const timeBucket = getTimeBucket();
     const rotationIndex = force
@@ -177,17 +302,6 @@ export class NewsService {
       : getRotationIndex(60);
     const localQuery = buildLocalNewsQuery(c, rotationIndex, timeBucket);
     const nationalQuery = buildNationalNewsQuery(co, rotationIndex, timeBucket);
-    const cacheKey = `primary:${c.toLowerCase()}|${co.toLowerCase()}|${(state ?? '').toLowerCase()}`; // SPRINT-30
-    const hit = this.cache.get(cacheKey);
-    if (!force && hit && Date.now() - hit.ts < this.primaryTtlMs) {
-      return this.toPagedPayload(
-        hit.data,
-        hit.cachedAt,
-        'primary',
-        page,
-        pageSize,
-      );
-    }
 
     const [cityNews, countryNews] = await Promise.all([
       fetchGoogleNewsRSS(localQuery, geo.gl, geo.hl, 'mycity'),
@@ -227,7 +341,7 @@ export class NewsService {
       cachedAt,
       data: unique,
     });
-    return this.toPagedPayload(unique, cachedAt, 'primary', page, pageSize);
+    return { data: unique, cachedAt };
   }
 
   getActiveLocations(): string[] {
@@ -257,6 +371,73 @@ export class NewsService {
       likedByMe: !!likedByMe,
       savedByMe: !!savedByMe, // SPRINT-30
     };
+  }
+
+  /**
+   * SPRINT-58: stats for a whole page of articles in four queries.
+   *
+   * The feed used to call getArticleStats once per visible card — 20 requests x 4
+   * queries per news load, and it re-ran on every article-list update. Batching keeps
+   * the query count flat no matter how many cards are on screen.
+   */
+  async getArticleStatsBatch(userId: string | undefined, articleIds: string[]) {
+    const ids = [...new Set(articleIds.filter(Boolean))].slice(0, 100);
+    if (ids.length === 0) return { data: {} };
+
+    const [likeGroups, commentGroups, myLikes, mySaves] = await Promise.all([
+      this.prisma.newsArticleLike.groupBy({
+        by: ['articleId'],
+        where: { articleId: { in: ids } },
+        _count: { articleId: true },
+      }),
+      this.prisma.newsArticleComment.groupBy({
+        by: ['articleId'],
+        where: { articleId: { in: ids } },
+        _count: { articleId: true },
+      }),
+      userId
+        ? this.prisma.newsArticleLike.findMany({
+            where: { userId, articleId: { in: ids } },
+            select: { articleId: true },
+          })
+        : Promise.resolve([]),
+      userId
+        ? this.prisma.newsArticleSave.findMany({
+            where: { userId, articleId: { in: ids } },
+            select: { articleId: true },
+          })
+        : Promise.resolve([]),
+    ]);
+
+    const likeCounts = new Map(
+      likeGroups.map((g) => [g.articleId, g._count.articleId]),
+    );
+    const commentCounts = new Map(
+      commentGroups.map((g) => [g.articleId, g._count.articleId]),
+    );
+    const likedIds = new Set(myLikes.map((r) => r.articleId));
+    const savedIds = new Set(mySaves.map((r) => r.articleId));
+
+    // Every requested id gets an entry, so the client can cache "no stats yet" too and
+    // never re-request the same article.
+    const data: Record<
+      string,
+      {
+        likeCount: number;
+        commentCount: number;
+        likedByMe: boolean;
+        savedByMe: boolean;
+      }
+    > = {};
+    for (const id of ids) {
+      data[id] = {
+        likeCount: likeCounts.get(id) ?? 0,
+        commentCount: commentCounts.get(id) ?? 0,
+        likedByMe: likedIds.has(id),
+        savedByMe: savedIds.has(id),
+      };
+    }
+    return { data };
   }
 
   // SPRINT-30: toggle saved live news article

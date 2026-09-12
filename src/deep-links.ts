@@ -44,6 +44,20 @@ const DEEP_LINK_PREFIX = '/app';
 
 const OG_FALLBACK_IMAGE = `${PUBLIC_WEB_ORIGIN}${DEEP_LINK_PREFIX}/og-default.png`;
 
+/**
+ * SPRINT-58: custom-scheme fallback for the "Open in ComLinkr" button, used when the OS
+ * did not intercept the Universal Link (Instagram/Facebook in-app browsers ignore them
+ * entirely).
+ *
+ * The path must keep the `/app` prefix. The app has no `/feed/<id>` or `/housing/<id>`
+ * route — `app/+native-intent.ts` only rewrites `/app/*` into the real tab route
+ * (`/(tabs)/housing?openListing=<id>`), so `comlinkr://housing/<id>` opened the app onto
+ * an unmatched route instead of the shared item.
+ */
+function schemeUrlFor(pathAndQuery: string): string {
+  return `comlinkr:/${DEEP_LINK_PREFIX}${pathAndQuery}`;
+}
+
 const APPLE_APP_SITE_ASSOCIATION = {
   applinks: {
     apps: [],
@@ -187,17 +201,30 @@ ${bodyHtml}
 </html>`;
 }
 
-function renderNotFound(canonical: string): string {
+/**
+ * SPRINT-58: `noun` keeps the copy honest for listings as well as posts, and the page now
+ * carries the same "Open in ComLinkr" affordance as a found item — someone with the app
+ * installed who lands here should still get into the app rather than a dead end.
+ */
+function renderNotFound(
+  canonical: string,
+  noun = 'post',
+  schemeUrl = 'comlinkr://',
+): string {
   return renderShell({
-    title: 'Post not available',
-    description: 'This post may have been removed or is no longer public.',
+    title: `${noun.charAt(0).toUpperCase()}${noun.slice(1)} not available`,
+    description: `This ${noun} may have been removed or is no longer public.`,
     image: OG_FALLBACK_IMAGE,
     canonical,
-    schemeUrl: 'comlinkr://',
+    schemeUrl,
     bodyHtml: `    <div class="card"><div class="body">
-      <h1>This post isn't available</h1>
+      <h1>This ${escapeHtml(noun)} isn't available</h1>
       <p class="content">It may have been removed, or it isn't public any more.</p>
-      <a class="cta" href="${PUBLIC_WEB_ORIGIN}">Go to ComLinkr</a>
+      <a class="cta" id="open-app" href="${escapeHtml(schemeUrl)}">Open in ComLinkr</a>
+      <div class="stores">
+        <a class="cta alt" href="${APP_STORE_URL}">App Store</a>
+        <a class="cta alt" href="${PLAY_STORE_URL}">Google Play</a>
+      </div>
     </div></div>`,
   });
 }
@@ -219,7 +246,9 @@ type PostForPage = {
 
 function renderPostPage(post: PostForPage, publicBaseUrl: string): string {
   const canonical = `${PUBLIC_WEB_ORIGIN}${DEEP_LINK_PREFIX}/feed?openPost=${encodeURIComponent(post.id)}`;
-  const schemeUrl = `comlinkr://feed/${encodeURIComponent(post.id)}`;
+  const schemeUrl = schemeUrlFor(
+    `/feed?openPost=${encodeURIComponent(post.id)}`,
+  );
   const heroUrl = post.media.length
     ? resolveMediaUrl(post.media[0].imageUrl, publicBaseUrl)
     : null;
@@ -264,6 +293,93 @@ ${tags}        <a class="cta" id="open-app" href="${escapeHtml(schemeUrl)}">Open
   return renderShell({
     title: post.title,
     description: toMetaDescription(post.content),
+    image: heroUrl ?? OG_FALLBACK_IMAGE,
+    canonical,
+    schemeUrl,
+    bodyHtml,
+  });
+}
+
+// SPRINT-58: housing listings are shared as /app/housing/<id> (see mobile
+// src/utils/shareLinks.ts) but had no handler, so every shared listing fell through to
+// the generic ComLinkr card with no title, image or link preview.
+type ListingForPage = {
+  id: string;
+  title: string;
+  description: string;
+  price: unknown;
+  currency: string;
+  bedrooms: number;
+  bathrooms: number;
+  neighborhood: string | null;
+  city: string;
+  country: string;
+  images: { imageUrl: string }[];
+};
+
+/** Formats the price without assuming the currency has a symbol we know. */
+function formatPrice(price: unknown, currency: string): string {
+  const amount = Number(price);
+  if (!Number.isFinite(amount)) return '';
+  try {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: currency || 'USD',
+      maximumFractionDigits: 0,
+    }).format(amount);
+  } catch {
+    // Intl throws on a currency code it does not recognise.
+    return `${currency} ${Math.round(amount).toLocaleString('en-US')}`;
+  }
+}
+
+function renderListingPage(
+  listing: ListingForPage,
+  publicBaseUrl: string,
+): string {
+  const canonical = `${PUBLIC_WEB_ORIGIN}${DEEP_LINK_PREFIX}/housing/${encodeURIComponent(listing.id)}`;
+  const schemeUrl = schemeUrlFor(`/housing/${encodeURIComponent(listing.id)}`);
+  const heroUrl = listing.images.length
+    ? resolveMediaUrl(listing.images[0].imageUrl, publicBaseUrl)
+    : null;
+
+  const price = formatPrice(listing.price, listing.currency);
+  const where = [listing.neighborhood, listing.city, listing.country]
+    .filter(Boolean)
+    .join(', ');
+  const facts = [
+    price ? `${price}/mo` : '',
+    `${listing.bedrooms} bed`,
+    `${listing.bathrooms} bath`,
+  ].filter(Boolean);
+
+  const hero = heroUrl
+    ? `      <img class="hero" src="${escapeHtml(heroUrl)}" alt="" />\n`
+    : '';
+  const chips = `      <div class="tags">${facts
+    .map((f) => `<span class="tag">${escapeHtml(f)}</span>`)
+    .join('')}</div>\n`;
+
+  const bodyHtml = `    <div class="card">
+${hero}      <div class="body">
+        <h1>${escapeHtml(listing.title)}</h1>
+        <div class="meta" style="margin-bottom:12px">${escapeHtml(where)}</div>
+${chips}        <p class="content">${escapeHtml(listing.description)}</p>
+        <a class="cta" id="open-app" href="${escapeHtml(schemeUrl)}">Open in ComLinkr</a>
+        <div class="stores">
+          <a class="cta alt" href="${APP_STORE_URL}">App Store</a>
+          <a class="cta alt" href="${PLAY_STORE_URL}">Google Play</a>
+        </div>
+      </div>
+    </div>`;
+
+  const summary = [facts.join(' · '), where].filter(Boolean).join(' — ');
+
+  return renderShell({
+    title: listing.title,
+    description: toMetaDescription(
+      summary ? `${summary}. ${listing.description}` : listing.description,
+    ),
     image: heroUrl ?? OG_FALLBACK_IMAGE,
     canonical,
     schemeUrl,
@@ -366,6 +482,78 @@ export function registerDeepLinkRoutes(app: INestApplication): void {
           // A rendering or database failure must still return a usable page rather than
           // an unstyled stack trace, since this URL is public.
           res.status(404).type('text/html').send(renderNotFound(canonical));
+        }
+      })();
+    },
+  );
+
+  // SPRINT-58: both shapes resolve here, matching the /app/feed handler above:
+  //   /app/housing/<id>            — what src/utils/shareLinks.ts emits for listings
+  //   /app/housing?openListing=<id> — the query form the other tabs use
+  app.use(
+    `${DEEP_LINK_PREFIX}/housing`,
+    (req: Request, res: Response, next: NextFunction) => {
+      const fromQuery = req.query?.openListing;
+      const fromPath = req.url.split('?')[0].split('/').filter(Boolean)[0];
+      const listingId = String(
+        typeof fromQuery === 'string' && fromQuery
+          ? fromQuery
+          : fromPath
+            ? decodeURIComponent(fromPath)
+            : '',
+      ).slice(0, 64);
+
+      if (!listingId) return next();
+
+      const canonical = `${PUBLIC_WEB_ORIGIN}${DEEP_LINK_PREFIX}/housing/${encodeURIComponent(listingId)}`;
+      const schemeUrl = schemeUrlFor(
+        `/housing/${encodeURIComponent(listingId)}`,
+      );
+
+      void (async () => {
+        try {
+          const listing = await prisma.housingListing.findUnique({
+            where: { id: listingId },
+            select: {
+              id: true,
+              title: true,
+              description: true,
+              price: true,
+              currency: true,
+              bedrooms: true,
+              bathrooms: true,
+              neighborhood: true,
+              city: true,
+              country: true,
+              status: true,
+              images: {
+                select: { imageUrl: true },
+                orderBy: { order: 'asc' },
+                take: 1,
+              },
+            },
+          });
+
+          // UNLISTED is the owner-hidden state; RENTED listings stay viewable, the same
+          // way they remain browsable in the app.
+          if (!listing || listing.status === 'UNLISTED') {
+            res
+              .status(404)
+              .type('text/html')
+              .send(renderNotFound(canonical, 'listing', schemeUrl));
+            return;
+          }
+
+          res
+            .status(200)
+            .type('text/html')
+            .setHeader('Cache-Control', 'public, max-age=300')
+            .send(renderListingPage(listing, storage.getPublicBaseUrl()));
+        } catch {
+          res
+            .status(404)
+            .type('text/html')
+            .send(renderNotFound(canonical, 'listing', schemeUrl));
         }
       })();
     },

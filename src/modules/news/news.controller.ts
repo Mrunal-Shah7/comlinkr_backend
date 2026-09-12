@@ -16,6 +16,7 @@ import { OptionalAuth } from '../../common/decorators/optional-auth.decorator';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { AddNewsCommentDto } from './dto/add-news-comment.dto';
 import { SaveNewsArticleDto } from './dto/save-news-article.dto'; // SPRINT-30
+import { NewsStatsBatchDto } from './dto/news-stats-batch.dto'; // SPRINT-58
 
 @ApiTags('News')
 @Controller('news')
@@ -70,6 +71,20 @@ export class NewsController {
     @Query() query: PaginationDto,
   ) {
     return this.newsService.getSavedArticles(userId, query);
+  }
+
+  // SPRINT-58: batch stats for a page of articles — must be declared before the
+  // ':id' routes so "stats" is not swallowed as an article id.
+  @Post('articles/stats')
+  @OptionalAuth()
+  @ApiOperation({
+    summary: 'Like/comment/liked/saved state for up to 100 articles',
+  })
+  getArticleStatsBatch(
+    @CurrentUser('id') userId: string | undefined,
+    @Body() dto: NewsStatsBatchDto,
+  ) {
+    return this.newsService.getArticleStatsBatch(userId, dto.ids);
   }
 
   @Get('articles/:id/stats')

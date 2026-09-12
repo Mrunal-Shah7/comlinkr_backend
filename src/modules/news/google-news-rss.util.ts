@@ -334,6 +334,11 @@ export async function fetchGoogleNewsRSS(
       const cleanTitle = rawTitle.split(' - ')[0]?.trim() || rawTitle;
       const link = xmlTag(item, 'link');
       const pubDate = xmlTag(item, 'pubDate');
+      const parsedPub = pubDate ? new Date(pubDate) : null;
+      const publishedAt =
+        parsedPub && !Number.isNaN(parsedPub.getTime())
+          ? parsedPub.toISOString()
+          : new Date().toISOString();
       const source =
         xmlTag(item, 'source') || rawTitle.split(' - ').pop() || 'News';
       const image = extractImage(item);
@@ -347,7 +352,7 @@ export async function fetchGoogleNewsRSS(
         url: link,
         image,
         source: source.trim(),
-        publishedAt: pubDate || new Date().toISOString(),
+        publishedAt,
         category,
       };
     });

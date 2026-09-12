@@ -50,12 +50,16 @@ export class UpdateProfileDto {
   bio?: string;
 
   @ApiPropertyOptional({
-    description: 'Phone number',
-    maxLength: 20,
+    description: 'Phone number (exactly 10 digits)',
+    example: '5551234567',
+    minLength: 10,
+    maxLength: 10,
   })
   @IsOptional()
   @IsString()
-  @MaxLength(20)
+  @Matches(/^\d{10}$/, {
+    message: 'Phone number must be exactly 10 digits',
+  })
   @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   phoneNumber?: string;
 

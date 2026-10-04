@@ -118,15 +118,6 @@ const MAGIC: Array<{ mime: string; check: (buf: Buffer) => boolean }> = [
       b[11] === 0x50,
   },
   {
-    mime: 'video/mp4',
-    check: (b) =>
-      b.length >= 8 &&
-      b[4] === 0x66 &&
-      b[5] === 0x74 &&
-      b[6] === 0x79 &&
-      b[7] === 0x70,
-  },
-  {
     mime: 'video/webm',
     check: (b) =>
       b.length >= 4 &&
@@ -135,21 +126,41 @@ const MAGIC: Array<{ mime: string; check: (buf: Buffer) => boolean }> = [
       b[2] === 0xdf &&
       b[3] === 0xa3,
   },
-  {
-    mime: 'video/quicktime',
-    check: (b) =>
-      b.length >= 8 &&
-      b[4] === 0x66 &&
-      b[5] === 0x74 &&
-      b[6] === 0x79 &&
-      b[7] === 0x71,
-  },
 ];
+
+// ISO-BMFF files (MP4, MOV, HEIC, AVIF) all carry "ftyp" at byte 4; the major
+// brand at bytes 8-11 tells them apart. iPhone photos are HEIC by default.
+const HEIF_BRANDS = new Set([
+  'heic',
+  'heix',
+  'hevc',
+  'hevx',
+  'heim',
+  'heis',
+  'mif1',
+  'msf1',
+]);
+
+function detectIsoBmffMime(b: Buffer): string | null {
+  if (b.length < 12 || b.toString('latin1', 4, 8) !== 'ftyp') return null;
+  const brand = b.toString('latin1', 8, 12);
+  if (HEIF_BRANDS.has(brand)) return 'image/heic';
+  if (brand === 'avif' || brand === 'avis') return 'image/avif';
+  if (brand === 'qt  ') return 'video/quicktime';
+  return 'video/mp4';
+}
+
+const MIME_ALIASES: Record<string, string> = {
+  'image/jpg': 'image/jpeg',
+  'image/pjpeg': 'image/jpeg',
+};
 
 const CLOUDINARY_URL_PATTERN =
   /^https:\/\/res\.cloudinary\.com\/[^/]+\/([^/]+)\/(?:upload|private)\/(?:v\d+\/)?(.+)\.[^/.?]+$/;
 
 function detectMimeFromMagic(buffer: Buffer): string | null {
+  const isoBmff = detectIsoBmffMime(buffer);
+  if (isoBmff) return isoBmff;
   for (const { mime, check } of MAGIC) {
     if (check(buffer)) return mime;
   }
@@ -248,13 +259,25 @@ export class StorageService {
 
   private validateMime(buffer: Buffer, declaredMimeType: string): string {
     const detected = detectMimeFromMagic(buffer);
-    if (!detected || !ALLOWED_MIME_TYPES.includes(detected)) {
+    if (detected === 'image/heic' || detected === 'image/avif') {
       throw new BadRequestException({
         code: 'FILE_INVALID_TYPE',
-        message: 'File type does not match its content. Upload rejected.',
+        message:
+          'HEIC/AVIF photos are not supported. Please choose a JPEG, PNG or WebP image.',
       });
     }
-    if (!ALLOWED_MIME_TYPES.includes(declaredMimeType)) {
+    const declared = MIME_ALIASES[declaredMimeType] ?? declaredMimeType;
+    // Video containers are interchangeable for upload (iOS .mov is often labelled
+    // video/mp4); anything else must be exactly the type it claims to be.
+    const consistent =
+      detected === declared ||
+      (detected?.startsWith('video/') && declared.startsWith('video/'));
+    if (
+      !detected ||
+      !ALLOWED_MIME_TYPES.includes(detected) ||
+      !ALLOWED_MIME_TYPES.includes(declared) ||
+      !consistent
+    ) {
       throw new BadRequestException({
         code: 'FILE_INVALID_TYPE',
         message: 'File type does not match its content. Upload rejected.',
@@ -263,7 +286,36 @@ export class StorageService {
     return detected;
   }
 
-  private uploadBuffer(
+  private async uploadBuffer(
+    buffer: Buffer,
+    mimeType: string,
+    publicId: string,
+    extension: string,
+    deliveryType: 'upload' | 'private',
+  ): Promise<UploadApiResponse> {
+    try {
+      return await this.uploadBufferOnce(
+        buffer,
+        mimeType,
+        publicId,
+        extension,
+        deliveryType,
+      );
+    } catch (error) {
+      // Cloudinary API errors carry an HTTP code and would fail again. Errors
+      // without one are dropped connections (seen on cold starts): retry once.
+      if ((error as { httpCode?: number }).httpCode) throw error;
+      return this.uploadBufferOnce(
+        buffer,
+        mimeType,
+        publicId,
+        extension,
+        deliveryType,
+      );
+    }
+  }
+
+  private uploadBufferOnce(
     buffer: Buffer,
     mimeType: string,
     publicId: string,
@@ -286,7 +338,9 @@ export class StorageService {
               error instanceof Error
                 ? error.message
                 : 'Cloudinary upload failed';
-            reject(new Error(message));
+            reject(
+              Object.assign(new Error(message), { httpCode: error.http_code }),
+            );
           } else if (!result)
             reject(new Error('Cloudinary upload returned no result'));
           else resolve(result);

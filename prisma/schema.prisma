@@ -313,6 +313,32 @@ enum SharedSpaceApplicationStatus {
   REJECTED
 }
 
+enum PropertyApplicationStatus {
+  DRAFT
+  SUBMITTED
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+  SIGNED
+  WITHDRAWN
+}
+
+enum SignatureType {
+  TYPED
+  DRAWN
+}
+
+enum DepositStatus {
+  PENDING
+  HELD
+  RELEASED
+  DISPUTED
+}
+
+enum UserDocumentType {
+  TENANCY_AGREEMENT
+}
+
 enum ReservationStatus {
   PENDING
   CONFIRMED
@@ -428,6 +454,9 @@ model User {
   privacyRequestsAsTarget PrivacyRequest[] @relation("PrivacyRequestTarget") // SPRINT-55
   privacyRequestsRequested PrivacyRequest[] @relation("PrivacyRequestRequester") // SPRINT-55
   privacyRequestsResolved PrivacyRequest[] @relation("PrivacyRequestResolver") // SPRINT-55
+  propertyApplications    PropertyApplication[] @relation("PropertyApplicant")
+  receivedPropertyApplications PropertyApplication[] @relation("PropertyLandlord")
+  documents               UserDocument[]
 
   @@index([email])
   @@index([username])
@@ -662,6 +691,7 @@ model HousingListing {
   images  HousingImage[]
   interests HousingInterest[]
   saves   HousingSave[]
+  applications PropertyApplication[]
 }
 
 model HousingImage {
@@ -1646,4 +1676,69 @@ model PrivacyRequest {
   @@index([type])
   @@index([status])
   @@index([createdAt])
+}
+
+// ============== PROPERTY APPLICATIONS ==============
+
+// Tenancy application for a housing listing. Step payloads are stored as JSON
+// snapshots; rent/deposit are copied from the listing so the tenant cannot alter them.
+model PropertyApplication {
+  id                 String                    @id @default(uuid())
+  listingId          String
+  applicantId        String
+  landlordId         String // listing owner at creation time
+  status             PropertyApplicationStatus @default(DRAFT)
+  currentStep        Int                       @default(1)
+  personalInfo       Json?
+  rentalHistory      Json?
+  financialDetails   Json?
+  agreementTerms     Json?
+  moveInDate         DateTime?
+  rentAmount         Decimal?
+  depositAmount      Decimal?
+  currency           String                    @default("USD")
+  signature          String? // typed legal name or base64 image
+  signatureType      SignatureType?
+  tenantSignedAt     DateTime? // tenant may sign while submitted/under review; final SIGNED waits for approval
+  landlordNote       String?                   @db.VarChar(1000)
+  submittedAt        DateTime?
+  reviewedAt         DateTime?
+  decidedAt          DateTime?
+  signedAt           DateTime?
+  withdrawnAt        DateTime?
+  depositStatus      DepositStatus             @default(PENDING)
+  depositReference   String?                   @unique
+  depositScheme      String?
+  depositRequestedAt DateTime?
+  depositHeldAt      DateTime?
+  depositReleasedAt  DateTime?
+  createdAt          DateTime                  @default(now())
+  updatedAt          DateTime                  @updatedAt
+
+  listing   HousingListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  applicant User           @relation("PropertyApplicant", fields: [applicantId], references: [id], onDelete: Cascade)
+  landlord  User           @relation("PropertyLandlord", fields: [landlordId], references: [id], onDelete: Cascade)
+  document  UserDocument?
+
+  @@index([applicantId])
+  @@index([landlordId, status])
+  @@index([listingId, applicantId])
+}
+
+// Files shown under the user's "My Documents".
+model UserDocument {
+  id                    String           @id @default(uuid())
+  userId                String
+  type                  UserDocumentType
+  title                 String           @db.VarChar(200)
+  fileKey               String // private storage key, served via signed URL
+  mimeType              String
+  sizeBytes             Int
+  propertyApplicationId String?          @unique
+  createdAt             DateTime         @default(now())
+
+  user                User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  propertyApplication PropertyApplication? @relation(fields: [propertyApplicationId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
 }

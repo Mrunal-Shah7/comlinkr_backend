@@ -23,11 +23,9 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Public } from '../../common/decorators/public.decorator';
 import { OptionalAuth } from '../../common/decorators/optional-auth.decorator';
 import { PaginationDto } from '../../common/dto/pagination.dto';
-import { StoriesService } from './stories.service';
+import { StoriesService, STORY_MEDIA_MAX_SIZE } from './stories.service';
 import { CreateStoryDto } from './dto/create-story.dto';
 import { AddStoryCommentDto } from './dto/add-story-comment.dto';
-
-const STORY_MEDIA_MAX_SIZE = 10 * 1024 * 1024;
 
 @ApiTags('Stories')
 @Controller('stories')

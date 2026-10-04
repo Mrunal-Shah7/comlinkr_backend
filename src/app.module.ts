@@ -27,6 +27,8 @@ import { AdminModule } from './modules/admin/admin.module';
 import { NewsModule } from './modules/news/news.module';
 import { SavesModule } from './modules/saves/saves.module';
 import { SharedSpacesModule } from './modules/shared-spaces/shared-spaces.module';
+import { PropertyApplicationsModule } from './modules/property-applications/property-applications.module';
+import { DocumentsModule } from './modules/documents/documents.module';
 import { AuthGuard } from './common/guards/auth.guard';
 import { OnboardingGuard } from './common/guards/onboarding.guard';
 import { HttpExceptionFilter } from './common/filters/http-exception.filter';
@@ -61,6 +63,8 @@ import { RequestLoggerMiddleware } from './common/middleware/request-logger.midd
     NewsModule,
     SavesModule,
     SharedSpacesModule,
+    PropertyApplicationsModule,
+    DocumentsModule,
   ],
   controllers: [AppController],
   providers: [

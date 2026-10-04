@@ -15,7 +15,7 @@ import {
 } from '../../common/dto/pagination.dto';
 import { resolveMediaUrl } from '../../common/utils/media-url'; // SPRINT-46: the one shared media URL resolver
 
-const STORY_MEDIA_MAX_SIZE = 50 * 1024 * 1024;
+export const STORY_MEDIA_MAX_SIZE = 50 * 1024 * 1024;
 const STORY_EXPIRY_HOURS = 24;
 const STORY_MEDIA_MIME = [
   'image/jpeg',

@@ -15,8 +15,27 @@ const ERROR_CODES: Record<number, string> = {
   [HttpStatus.FORBIDDEN]: 'FORBIDDEN',
   [HttpStatus.NOT_FOUND]: 'RESOURCE_NOT_FOUND',
   [HttpStatus.CONFLICT]: 'CONFLICT',
+  [HttpStatus.PAYLOAD_TOO_LARGE]: 'FILE_TOO_LARGE',
   [HttpStatus.INTERNAL_SERVER_ERROR]: 'INTERNAL_ERROR',
 };
+
+/**
+ * Clients show the top-level message to the user, so pick the clearest error for
+ * the first failing field. class-validator lists a field's errors bottom decorator
+ * first (e.g. MaxLength before IsNotEmpty), which reads wrongly for a missing value.
+ */
+function headlineValidationMessage(
+  details: Array<{ field: string; message: string }>,
+): string | undefined {
+  const first = details[0];
+  if (!first) return undefined;
+  const sameField = details.filter((d) => d.field === first.field);
+  const missing = sameField.find((d) =>
+    d.message.endsWith('should not be empty'),
+  );
+  // The last entry is the field's first-declared decorator, usually its basic type check.
+  return (missing ?? sameField[sameField.length - 1]).message;
+}
 
 @Catch()
 export class HttpExceptionFilter implements ExceptionFilter {
@@ -39,14 +58,17 @@ export class HttpExceptionFilter implements ExceptionFilter {
         if (typeof body.code === 'string') code = body.code;
         if (typeof body.message === 'string') message = body.message;
         else if (Array.isArray(body.message)) {
-          message = 'Validation failed';
-          details = (body.message as string[]).map((msg) => {
-            const fieldMatch = msg.match(/^(\w+)\s/);
+          const messages = body.message as string[];
+          details = messages.map((msg) => {
+            const fieldMatch =
+              msg.match(/^property ([\w.]+) should not exist/) ??
+              msg.match(/^([\w.]+)\s/);
             return {
               field: fieldMatch ? fieldMatch[1] : 'field',
               message: msg,
             };
           });
+          message = headlineValidationMessage(details) ?? 'Validation failed';
           code = 'VALIDATION_ERROR';
         }
       } else if (typeof res === 'string') {

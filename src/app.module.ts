@@ -77,6 +77,7 @@ import { RequestLoggerMiddleware } from './common/middleware/request-logger.midd
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {
-    consumer.apply(RequestLoggerMiddleware).forRoutes('*');
+    // Named wildcard: the bare '*' is legacy syntax in path-to-regexp v8 (Express 5) and logs a warning.
+    consumer.apply(RequestLoggerMiddleware).forRoutes('{*path}');
   }
 }

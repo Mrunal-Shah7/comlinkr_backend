@@ -1076,10 +1076,39 @@ export class MessagingService {
     const convIds = myConvs.map((c) => c.conversationId);
     if (convIds.length === 0) return [];
     const others = await this.prisma.conversationMember.findMany({
-      where: { conversationId: { in: convIds }, userId: { not: userId } },
+      where: {
+        conversationId: { in: convIds },
+        userId: { not: userId },
+        status: 'ACCEPTED',
+      },
       select: { userId: true },
     });
     return [...new Set(others.map((o) => o.userId))];
+  }
+
+  /**
+   * SEC-13: recipients of this user's presence events. Empty unless the user
+   * opted into activity status; limited to accepted, non-blocked partners.
+   */
+  async getPresenceRecipientIds(userId: string): Promise<string[]> {
+    const settings = await this.prisma.privacySettings.findUnique({
+      where: { userId },
+      select: { activityStatus: true },
+    });
+    if (settings?.activityStatus !== true) return [];
+    const partners = await this.getConversationPartnerIds(userId);
+    if (partners.length === 0) return [];
+    const blocks = await this.prisma.blockedUser.findMany({
+      where: {
+        OR: [
+          { blockerId: userId, blockedId: { in: partners } },
+          { blockedId: userId, blockerId: { in: partners } },
+        ],
+      },
+      select: { blockerId: true, blockedId: true },
+    });
+    const blocked = new Set(blocks.flatMap((b) => [b.blockerId, b.blockedId]));
+    return partners.filter((id) => !blocked.has(id));
   }
 
   async isMemberWithStatus(

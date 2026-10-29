@@ -87,7 +87,11 @@ export class HttpExceptionFilter implements ExceptionFilter {
         code = 'RESOURCE_NOT_FOUND';
         message = 'Record not found';
       } else {
-        message = exception.message;
+        // SEC-12: never return raw ORM text; keep diagnostics server-side.
+        this.logger.error(
+          `Unmapped Prisma error ${exception.code}: ${exception.message}`,
+        );
+        message = 'An unexpected error occurred';
       }
     } else if (exception instanceof Error) {
       this.logger.error(exception.stack);

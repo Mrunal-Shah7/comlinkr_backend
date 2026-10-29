@@ -1,3 +1,5 @@
+import { lookup } from 'dns/promises';
+import { isIP } from 'net';
 /** Ported from mobile feed RSS helpers — server-side fetch avoids device CORS / blocks */
 
 export interface RssNewsArticle {
@@ -400,8 +402,74 @@ function extractOgImageFromHtml(html: string): string | null {
   return null;
 }
 
+const MAX_REDIRECTS = 3;
+const MAX_BODY_BYTES = 200_000;
+const FETCH_TIMEOUT_MS = 5000;
+const ENRICH_CONCURRENCY = 6;
+
+/** SEC-11: reject loopback, private, link-local and other non-public addresses. */
+function isPublicIp(ip: string): boolean {
+  const kind = isIP(ip);
+  if (kind === 4) {
+    const [a, b] = ip.split('.').map(Number);
+    if (a === 0 || a === 10 || a === 127) return false;
+    if (a === 169 && b === 254) return false;
+    if (a === 172 && b >= 16 && b <= 31) return false;
+    if (a === 192 && b === 168) return false;
+    if (a === 100 && b >= 64 && b <= 127) return false;
+    if (a >= 224) return false;
+    return true;
+  }
+  if (kind === 6) {
+    const v = ip.toLowerCase();
+    if (v === '::' || v === '::1') return false;
+    if (v.startsWith('fc') || v.startsWith('fd')) return false;
+    if (v.startsWith('fe8') || v.startsWith('fe9') || v.startsWith('fea') || v.startsWith('feb')) return false;
+    const mapped = v.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+    if (mapped) return isPublicIp(mapped[1]);
+    return true;
+  }
+  return false;
+}
+
+async function assertPublicHttpUrl(raw: string): Promise<URL> {
+  const url = new URL(raw);
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+    throw new Error('unsupported protocol');
+  }
+  if (url.port && url.port !== '80' && url.port !== '443') {
+    throw new Error('unsupported port');
+  }
+  const host = url.hostname.replace(/^\[|\]$/g, '');
+  const addresses = isIP(host)
+    ? [{ address: host }]
+    : await lookup(host, { all: true });
+  if (addresses.length === 0 || !addresses.every((a) => isPublicIp(a.address))) {
+    throw new Error('non-public destination');
+  }
+  return url;
+}
+
+async function readBodyBounded(resp: Response): Promise<string> {
+  if (!resp.body) return '';
+  const reader = resp.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  while (received < MAX_BODY_BYTES) {
+    const { done, value } = await reader.read();
+    if (done || !value) break;
+    chunks.push(value);
+    received += value.byteLength;
+  }
+  void reader.cancel().catch(() => undefined);
+  return Buffer.concat(chunks.map((c) => Buffer.from(c))).toString('utf8');
+}
+
 /** Best-effort fetch of og:image / twitter:image from an article page. Never throws. */
 export async function fetchOgImage(articleUrl: string): Promise<string | null> {
+  const controller = new AbortController();
+  // The timeout covers headers AND body read.
+  const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
     let target = articleUrl;
     if (articleUrl.includes('news.google.com')) {
@@ -409,29 +477,39 @@ export async function fetchOgImage(articleUrl: string): Promise<string | null> {
       if (!decoded) return null;
       target = decoded;
     }
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000);
-    const resp = await fetch(target, {
-      headers: {
-        Accept: 'text/html,application/xhtml+xml,*/*',
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-      },
-      signal: controller.signal,
-      redirect: 'follow',
-    });
-    clearTimeout(timeoutId);
-    if (!resp.ok) return null;
-    const text = await resp.text();
+    let resp: Response | null = null;
+    for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+      const url = await assertPublicHttpUrl(target);
+      resp = await fetch(url, {
+        headers: {
+          Accept: 'text/html,application/xhtml+xml,*/*',
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        },
+        signal: controller.signal,
+        redirect: 'manual',
+      });
+      if (resp.status >= 300 && resp.status < 400) {
+        const location = resp.headers.get('location');
+        if (!location || hop === MAX_REDIRECTS) return null;
+        target = new URL(location, url).toString();
+        continue;
+      }
+      break;
+    }
+    if (!resp || !resp.ok) return null;
+    const text = await readBodyBounded(resp);
     return extractOgImageFromHtml(text);
   } catch {
     return null;
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 
 /**
- * Fills `image` for up to the first 30 articles that had `image: null`, in parallel.
- * Preserves order and leaves other articles unchanged.
+ * Fills `image` for up to the first 30 articles that had `image: null`,
+ * with bounded concurrency. Preserves order and leaves other articles unchanged.
  */
 export async function enrichArticlesWithImages(
   articles: RssNewsArticle[],
@@ -442,15 +520,17 @@ export async function enrichArticlesWithImages(
     if (!out[i].image) nullIndices.push(i);
   }
   const batch = nullIndices.slice(0, 30);
-  const settled = await Promise.allSettled(
-    batch.map((idx) => fetchOgImage(out[idx].url)),
-  );
-  settled.forEach((r, j) => {
-    if (r.status === 'fulfilled' && r.value) {
-      const idx = batch[j];
-      out[idx] = { ...out[idx], image: r.value };
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < batch.length) {
+      const idx = batch[cursor++];
+      const image = await fetchOgImage(out[idx].url);
+      if (image) out[idx] = { ...out[idx], image };
     }
-  });
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(ENRICH_CONCURRENCY, batch.length) }, worker),
+  );
   return out;
 }
 

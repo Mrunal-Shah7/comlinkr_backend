@@ -178,72 +178,8 @@ async function main() {
   }
   console.log(`Seeded ${communityCount} communities`);
 
-  async function seedAdminUser(
-    email: string,
-    username: string,
-    fullName: string,
-    password: string,
-  ) {
-    const passwordHash = await bcrypt.hash(password, 12);
-
-    const user = await prisma.user.upsert({
-      where: { email },
-      create: {
-        email,
-        username,
-        fullName,
-        role: 'ADMIN',
-        onboardingCompleted: true,
-        authProviders: {
-          create: {
-            provider: 'LOCAL',
-            passwordHash,
-          },
-        },
-      },
-      update: {
-        fullName,
-        role: 'ADMIN',
-        onboardingCompleted: true,
-      },
-      include: { authProviders: true },
-    });
-
-    if (user.authProviders.length === 0) {
-      await prisma.authProvider.upsert({
-        where: {
-          userId_provider: { userId: user.id, provider: 'LOCAL' },
-        },
-        create: {
-          userId: user.id,
-          provider: 'LOCAL',
-          passwordHash,
-        },
-        update: { passwordHash },
-      });
-    } else {
-      await prisma.authProvider.updateMany({
-        where: { userId: user.id, provider: 'LOCAL' },
-        data: { passwordHash },
-      });
-    }
-
-    console.log(`Seeded admin user (${email})`);
-  }
-
-  await seedAdminUser(
-    'shahmrunal777@gmail.com',
-    'shahmrunal777',
-    'Shahm Runal',
-    'pmscrm007',
-  );
-
-  await seedAdminUser(
-    'Pavanbarot0610@gmail.com',
-    'pavanbarot0610',
-    'Pavan Barot',
-    'Pavan@610',
-  );
+  // Admin accounts are intentionally NOT created here (SEC-06).
+  // Use `pnpm seed:admin` with ADMIN_EMAIL / ADMIN_USERNAME / ADMIN_PASSWORD.
 }
 
 main()

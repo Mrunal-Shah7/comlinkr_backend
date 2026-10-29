@@ -4,8 +4,24 @@ import type { RedisClientType } from 'redis';
 /** Must match the Cookie header name used by express-session. */
 export const SESSION_COOKIE_NAME = 'comlinkr.sid';
 
+const DEV_FALLBACK_SECRET = 'dev-only-insecure-session-secret';
+const MIN_PROD_SECRET_LENGTH = 32;
+
 export function getSessionSecret(): string {
-  return process.env.SESSION_SECRET || 'change-me-in-production';
+  const configured = (process.env.SESSION_SECRET || '').trim();
+  if (process.env.NODE_ENV === 'production') {
+    if (
+      configured.length < MIN_PROD_SECRET_LENGTH ||
+      configured === 'change-me-in-production' ||
+      configured === DEV_FALLBACK_SECRET
+    ) {
+      throw new Error(
+        `SESSION_SECRET must be set to a strong value (>= ${MIN_PROD_SECRET_LENGTH} chars) in production`,
+      );
+    }
+    return configured;
+  }
+  return configured || DEV_FALLBACK_SECRET;
 }
 
 // connect-redis only has a named export RedisStore (no default function at runtime)

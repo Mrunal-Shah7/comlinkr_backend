@@ -128,6 +128,8 @@ export class FoodService {
       waitTimeMinutes: restaurant.waitTimeMinutes,
       openingTime: restaurant.openingTime,
       closingTime: restaurant.closingTime,
+      timezone: restaurant.timezone ?? null,
+      currency: restaurant.currency ?? null,
       isOpen: restaurant.isOpen,
       isVerified: restaurant.isVerified,
       availableServices: restaurant.availableServices ?? [],
@@ -364,6 +366,8 @@ export class FoodService {
       waitTimeMinutes: dto.waitTimeMinutes,
       openingTime: dto.openingTime,
       closingTime: dto.closingTime,
+      timezone: dto.timezone,
+      currency: dto.currency,
       availableServices: dto.availableServices,
       popularDishes: JSON.parse(JSON.stringify(dto.popularDishes ?? [])),
       tags: dto.tags ?? [],
@@ -425,6 +429,8 @@ export class FoodService {
       'waitTimeMinutes',
       'openingTime',
       'closingTime',
+      'timezone',
+      'currency',
       'availableServices',
       'popularDishes',
       'tags',
@@ -588,16 +594,8 @@ export class FoodService {
         message: 'You have already reviewed this restaurant.',
       });
     }
-    const oldCount = restaurant.totalReviews;
-    const oldAvg = Number(restaurant.averageRating);
-    const newTotalReviews = oldCount + 1;
-    const newAverageRating =
-      oldCount === 0
-        ? dto.rating
-        : (oldAvg * oldCount + dto.rating) / newTotalReviews;
-    const rounded = Math.round(newAverageRating * 10) / 10;
-
     const review = await this.prisma.$transaction(async (tx) => {
+      await this.lockRestaurant(tx, restaurantId);
       const r = await tx.restaurantReview.create({
         data: {
           restaurantId,
@@ -606,13 +604,7 @@ export class FoodService {
           content: dto.content,
         },
       });
-      await tx.restaurant.update({
-        where: { id: restaurantId },
-        data: {
-          totalReviews: newTotalReviews,
-          averageRating: rounded,
-        },
-      });
+      await this.recomputeReviewAggregate(tx, restaurantId);
       return r;
     });
 
@@ -726,29 +718,8 @@ export class FoodService {
     if (dto.rating === undefined && dto.content === undefined) {
       throw new BadRequestException('Provide at least one field to update');
     }
-    const restaurant = await this.prisma.restaurant.findUnique({
-      where: { id: restaurantId },
-      select: { averageRating: true, totalReviews: true },
-    });
-    if (!restaurant) {
-      throw new NotFoundException({
-        code: 'RESOURCE_NOT_FOUND',
-        message: 'Restaurant not found',
-      });
-    }
-    const totalReviews = restaurant.totalReviews;
-    const oldAvg = Number(restaurant.averageRating);
-    const oldRating = review.rating;
-    const ratingChanged = dto.rating !== undefined && dto.rating !== oldRating;
-    let newAvgRounded = oldAvg;
-    if (ratingChanged && totalReviews > 0) {
-      const newRating = dto.rating as number;
-      const newAvg =
-        (oldAvg * totalReviews - oldRating + newRating) / totalReviews;
-      newAvgRounded = Math.round(newAvg * 10) / 10;
-    }
-
     await this.prisma.$transaction(async (tx) => {
+      await this.lockRestaurant(tx, restaurantId);
       await tx.restaurantReview.update({
         where: { id: review.id },
         data: {
@@ -756,12 +727,7 @@ export class FoodService {
           ...(dto.content !== undefined ? { content: dto.content } : {}),
         },
       });
-      if (ratingChanged) {
-        await tx.restaurant.update({
-          where: { id: restaurantId },
-          data: { averageRating: newAvgRounded },
-        });
-      }
+      await this.recomputeReviewAggregate(tx, restaurantId);
     });
 
     const withUser = await this.prisma.restaurantReview.findUnique({
@@ -790,38 +756,10 @@ export class FoodService {
         message: 'You have not reviewed this restaurant',
       });
     }
-    const restaurant = await this.prisma.restaurant.findUnique({
-      where: { id: restaurantId },
-      select: { totalReviews: true, averageRating: true },
-    });
-    if (!restaurant) {
-      throw new NotFoundException({
-        code: 'RESOURCE_NOT_FOUND',
-        message: 'Restaurant not found',
-      });
-    }
-    const totalReviews = restaurant.totalReviews;
-    const oldAvg = Number(restaurant.averageRating);
-    const rRating = review.rating;
-
     await this.prisma.$transaction(async (tx) => {
+      await this.lockRestaurant(tx, restaurantId);
       await tx.restaurantReview.delete({ where: { id: review.id } });
-      if (totalReviews > 1) {
-        const newAvg = (oldAvg * totalReviews - rRating) / (totalReviews - 1);
-        const rounded = Math.round(newAvg * 10) / 10;
-        await tx.restaurant.update({
-          where: { id: restaurantId },
-          data: {
-            totalReviews: totalReviews - 1,
-            averageRating: rounded,
-          },
-        });
-      } else {
-        await tx.restaurant.update({
-          where: { id: restaurantId },
-          data: { totalReviews: 0, averageRating: 0 },
-        });
-      }
+      await this.recomputeReviewAggregate(tx, restaurantId);
     });
 
     return { deleted: true };
@@ -898,6 +836,52 @@ export class FoodService {
     },
   };
 
+  /** REL-02: serialize review writes per restaurant. */
+  private async lockRestaurant(
+    tx: Prisma.TransactionClient,
+    restaurantId: string,
+  ): Promise<void> {
+    await tx.$queryRaw`SELECT id FROM "Restaurant" WHERE id = ${restaurantId} FOR UPDATE`;
+  }
+
+  /** REL-02: derive total/average from the review rows themselves. */
+  private async recomputeReviewAggregate(
+    tx: Prisma.TransactionClient,
+    restaurantId: string,
+  ): Promise<void> {
+    const agg = await tx.restaurantReview.aggregate({
+      where: { restaurantId },
+      _count: { _all: true },
+      _avg: { rating: true },
+    });
+    const total = agg._count._all;
+    const avg = total === 0 ? 0 : Math.round((agg._avg.rating ?? 0) * 10) / 10;
+    await tx.restaurant.update({
+      where: { id: restaurantId },
+      data: { totalReviews: total, averageRating: avg },
+    });
+  }
+
+  /** "YYYY-MM-DD HH:mm" for now in the given IANA zone (UTC when unknown). */
+  private nowInTimezone(timezone?: string | null): string {
+    const now = new Date();
+    try {
+      const parts = new Intl.DateTimeFormat('en-CA', {
+        timeZone: timezone || 'UTC',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        hourCycle: 'h23',
+      }).formatToParts(now);
+      const get = (t: string) => parts.find((p) => p.type === t)?.value ?? '00';
+      return `${get('year')}-${get('month')}-${get('day')} ${get('hour')}:${get('minute')}`;
+    } catch {
+      return now.toISOString().slice(0, 16).replace('T', ' ');
+    }
+  }
+
   async createReservation(
     userId: string,
     restaurantId: string,
@@ -905,7 +889,7 @@ export class FoodService {
   ) {
     const restaurant = await this.prisma.restaurant.findUnique({
       where: { id: restaurantId },
-      select: { id: true, name: true, ownerId: true },
+      select: { id: true, name: true, ownerId: true, timezone: true },
     });
     if (!restaurant) {
       throw new NotFoundException({
@@ -913,14 +897,49 @@ export class FoodService {
         message: 'Restaurant not found',
       });
     }
-    const reservationDate = new Date(dto.date);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    reservationDate.setHours(0, 0, 0, 0);
-    if (reservationDate.getTime() < today.getTime()) {
+    // REL-01: validate the requested slot in the restaurant's timezone when known.
+    const dateOnly = dto.date.slice(0, 10);
+    const [yy, mm, dd] = dateOnly.split('-').map(Number);
+    const reservationDate = new Date(Date.UTC(yy, mm - 1, dd));
+    if (
+      Number.isNaN(reservationDate.getTime()) ||
+      reservationDate.getUTCMonth() !== mm - 1
+    ) {
       throw new BadRequestException({
         code: 'BAD_REQUEST',
-        message: 'Reservation date must be in the future',
+        message: 'Invalid reservation date',
+      });
+    }
+    const nowParts = this.nowInTimezone(restaurant.timezone);
+    const requestedKey = `${dateOnly} ${dto.time}`;
+    if (requestedKey < nowParts) {
+      throw new BadRequestException({
+        code: 'BAD_REQUEST',
+        message: 'Reservation time must be in the future',
+      });
+    }
+    const horizon = new Date(Date.parse(nowParts.slice(0, 10) + 'T00:00:00Z'));
+    horizon.setUTCDate(horizon.getUTCDate() + 90);
+    if (reservationDate.getTime() > horizon.getTime()) {
+      throw new BadRequestException({
+        code: 'BAD_REQUEST',
+        message: 'Reservations can be requested up to 90 days ahead',
+      });
+    }
+    const duplicate = await this.prisma.restaurantReservation.findFirst({
+      where: {
+        restaurantId,
+        userId,
+        date: reservationDate,
+        time: dto.time,
+        status: 'PENDING',
+      },
+      select: { id: true },
+    });
+    if (duplicate) {
+      throw new ConflictException({
+        code: 'DUPLICATE_ENTRY',
+        message: 'You already have a pending request for this time',
       });
     }
     const created = await this.prisma.restaurantReservation.create({

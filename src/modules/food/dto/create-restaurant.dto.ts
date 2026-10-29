@@ -8,6 +8,7 @@ import {
   IsString,
   IsNotEmpty,
   MaxLength,
+  Matches,
   Min,
   ValidateNested,
 } from 'class-validator';
@@ -103,6 +104,18 @@ export class CreateRestaurantDto {
   @IsString()
   @MaxLength(20)
   closingTime?: string;
+
+  @ApiPropertyOptional({ example: 'America/New_York', description: 'IANA timezone of the business' })
+  @IsOptional()
+  @IsString()
+  @Matches(/^[A-Za-z_]+(\/[A-Za-z0-9_+-]+)+$/, { message: 'timezone must be an IANA zone like America/New_York' })
+  timezone?: string;
+
+  @ApiPropertyOptional({ example: 'USD', description: 'ISO-4217 currency of the prices' })
+  @IsOptional()
+  @IsString()
+  @Matches(/^[A-Z]{3}$/, { message: 'currency must be a 3-letter ISO code' })
+  currency?: string;
 
   @ApiProperty({
     description: 'e.g. ["Dine-in", "Takeout", "Delivery"]',

@@ -18,7 +18,9 @@ export class CreateReservationDto {
 
   @ApiProperty({ example: '19:30', description: 'HH:MM (24-hour)' })
   @IsString()
-  @Matches(/^\d{2}:\d{2}$/, { message: 'time must be in HH:MM format' }) // SPRINT-29
+  @Matches(/^([01]\d|2[0-3]):[0-5]\d$/, {
+    message: 'time must be a valid 24-hour HH:MM time (00:00-23:59)',
+  }) // SPRINT-29
   time: string;
 
   @ApiProperty({ minimum: 1, maximum: 20, example: 4 })

@@ -6,7 +6,18 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { OtpType } from '@prisma/client';
+import { createHmac, randomInt, timingSafeEqual } from 'crypto';
 import { MailService } from './mail.service';
+import { getSessionSecret } from '../../config/session.config';
+
+const OTP_MAX_ATTEMPTS = 5;
+
+/** Keyed digest so active codes are not readable from the database. */
+function digestOtp(email: string, type: OtpType, code: string): string {
+  return createHmac('sha256', getSessionSecret())
+    .update(`${email}:${type}:${code}`)
+    .digest('hex');
+}
 
 @Injectable()
 export class OtpService {
@@ -28,13 +39,13 @@ export class OtpService {
       data: { expiresAt: now },
     });
 
-    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    const code = randomInt(100000, 1000000).toString();
     const expiresAt = new Date(now.getTime() + 10 * 60 * 1000);
 
     await this.prisma.otpCode.create({
       data: {
         email,
-        code,
+        code: digestOtp(email, type, code),
         type,
         expiresAt,
         verified: false,
@@ -71,7 +82,7 @@ export class OtpService {
       });
     }
 
-    if (record.attempts >= 5) {
+    if (record.attempts >= OTP_MAX_ATTEMPTS) {
       throw new HttpException(
         {
           code: 'OTP_MAX_ATTEMPTS',
@@ -81,10 +92,16 @@ export class OtpService {
       );
     }
 
-    if (record.code !== code) {
-      await this.prisma.otpCode.update({
-        where: { id: record.id },
-        data: { attempts: record.attempts + 1 },
+    const expected = Buffer.from(record.code, 'utf8');
+    const actual = Buffer.from(digestOtp(email, type, code), 'utf8');
+    const matches =
+      expected.length === actual.length && timingSafeEqual(expected, actual);
+
+    if (!matches) {
+      // Atomic increment: concurrent failures cannot overwrite each other.
+      await this.prisma.otpCode.updateMany({
+        where: { id: record.id, attempts: { lt: OTP_MAX_ATTEMPTS } },
+        data: { attempts: { increment: 1 } },
       });
       throw new BadRequestException({
         code: 'OTP_INVALID',
@@ -92,10 +109,22 @@ export class OtpService {
       });
     }
 
-    await this.prisma.otpCode.update({
-      where: { id: record.id },
+    // One-time consumption: only one concurrent verifier can flip verified.
+    const consumed = await this.prisma.otpCode.updateMany({
+      where: {
+        id: record.id,
+        verified: false,
+        expiresAt: { gt: now },
+        attempts: { lt: OTP_MAX_ATTEMPTS },
+      },
       data: { verified: true },
     });
+    if (consumed.count !== 1) {
+      throw new BadRequestException({
+        code: 'OTP_INVALID',
+        message: 'Verification code is no longer valid',
+      });
+    }
     return true;
   }
 }

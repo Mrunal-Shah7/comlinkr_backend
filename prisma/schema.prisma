@@ -372,6 +372,7 @@ model User {
   dateOfBirth          DateTime? // SPRINT-57: date of birth is the durable source for displayed age (age itself would go stale)
   role                 Role      @default(USER)
   isActive             Boolean   @default(true)
+  sessionVersion       Int       @default(0) // SEC-02: bumped on password recovery/suspension to revoke existing sessions
   deletedAt            DateTime?
   deletionSource       DeletionSource @default(NONE) // SPRINT-55: SELF vs ADMIN pending deletion; NONE preserves pre-sprint self-cancel
   onboardingCompleted  Boolean   @default(false)
@@ -834,6 +835,8 @@ model Restaurant {
   waitTimeMinutes    Int?
   openingTime        String?
   closingTime        String?
+  timezone           String?   // FOD-02: IANA business timezone (e.g. America/New_York)
+  currency           String?   // FOD-02: ISO-4217 code the prices are quoted in
   isOpen             Boolean   @default(true)
   isVerified         Boolean   @default(false)
   availableServices  String[]

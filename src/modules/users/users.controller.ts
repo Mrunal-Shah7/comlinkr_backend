@@ -218,6 +218,16 @@ export class UsersController {
     return this.usersService.reportUser(reporterId, targetUserId, dto.reason);
   }
 
+  @Get(':id/posts')
+  @ApiOperation({ summary: 'Public posts of another user' })
+  async getUserPosts(
+    @CurrentUser('id') viewerId: string,
+    @Param('id') id: string,
+    @Query() query: PaginationDto,
+  ) {
+    return this.postsService.getPublicPosts(viewerId, id, query);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: 'Get public profile by ID' })
   @ApiResponse({ status: 200, description: 'Public profile' })

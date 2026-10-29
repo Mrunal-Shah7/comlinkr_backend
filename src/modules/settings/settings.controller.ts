@@ -31,11 +31,18 @@ export class SettingsController {
   }
 
   @Patch('account')
-  updateAccount(
+  async updateAccount(
     @CurrentUser('id') userId: string,
     @Body() dto: UpdateAccountDto,
+    @Req() req: Request,
   ) {
-    return this.settingsService.updateAccount(userId, dto);
+    const result = await this.settingsService.updateAccount(userId, dto);
+    if (dto.newPassword) {
+      // SEC-02: a password change revokes every other session; keep this one signed in.
+      const sv = await this.settingsService.bumpSessionVersion(userId);
+      (req.session as unknown as { sv?: number }).sv = sv;
+    }
+    return result;
   }
 
   @Get('privacy')

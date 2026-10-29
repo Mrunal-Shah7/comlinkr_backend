@@ -1,3 +1,4 @@
+import { NotFoundException } from '@nestjs/common';
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
@@ -19,13 +20,52 @@ type UnifiedPost = {
 export class PostsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async getMyPosts(userId: string, query: PaginationDto) {
+  /** DEV-02: published, unexpired content of another user; blocked/inactive users are 404. */
+  async getPublicPosts(
+    viewerId: string,
+    targetUserId: string,
+    query: PaginationDto,
+  ) {
+    const [blocked, target] = await Promise.all([
+      this.prisma.blockedUser.findFirst({
+        where: {
+          OR: [
+            { blockerId: viewerId, blockedId: targetUserId },
+            { blockerId: targetUserId, blockedId: viewerId },
+          ],
+        },
+        select: { id: true },
+      }),
+      this.prisma.user.findUnique({
+        where: { id: targetUserId },
+        select: {
+          isActive: true,
+          privacySettings: { select: { publicProfile: true } },
+        },
+      }),
+    ]);
+    if (blocked || !target?.isActive) {
+      throw new NotFoundException({
+        code: 'RESOURCE_NOT_FOUND',
+        message: 'User not found',
+      });
+    }
+    // Respect the profile-privacy toggle: a private profile exposes no posts to other users.
+    if (target.privacySettings?.publicProfile === false && viewerId !== targetUserId) {
+      const page = query.page ?? 1;
+      const limit = query.limit ?? 20;
+      return { data: [], meta: createPaginationMeta(page, limit, 0) };
+    }
+    return this.getMyPosts(targetUserId, query, true);
+  }
+
+  async getMyPosts(userId: string, query: PaginationDto, publicOnly = false) {
     const page = query.page ?? 1;
     const limit = query.limit ?? 20;
 
     const [feedPosts, events, stories, challenges] = await Promise.all([
       this.prisma.feedPost.findMany({
-        where: { authorId: userId },
+        where: { authorId: userId, ...(publicOnly ? { isPublished: true } : {}) },
         select: {
           id: true,
           title: true,
@@ -51,7 +91,10 @@ export class PostsService {
         },
       }),
       this.prisma.story.findMany({
-        where: { authorId: userId },
+        where: {
+          authorId: userId,
+          ...(publicOnly ? { expiresAt: { gt: new Date() } } : {}),
+        },
         select: {
           id: true,
           title: true,

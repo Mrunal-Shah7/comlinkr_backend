@@ -10,12 +10,19 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { RedisService } from './redis/redis.service';
 import { getSessionOptions } from './config/session.config';
 import { registerDeepLinkRoutes } from './deep-links'; // SPRINT-57
-import { HttpExceptionFilter } from './common/filters/http-exception.filter';
-import { TransformInterceptor } from './common/interceptors/transform.interceptor';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const configService = app.get(ConfigService);
+  // SEC-14: behind a TLS-terminating proxy, trust it so secure cookies and client IPs work.
+  const trustProxy = configService.get<string>('TRUST_PROXY');
+  if (trustProxy) {
+    const hops = Number(trustProxy);
+    app.getHttpAdapter().getInstance().set(
+      'trust proxy',
+      Number.isInteger(hops) ? hops : trustProxy,
+    );
+  }
   const redisService = app.get(RedisService);
   const redisClient = redisService.getClient();
   app.use(session(getSessionOptions(redisClient)));
@@ -40,6 +47,9 @@ async function bootstrap() {
     .map((s) => s.trim())
     .filter(Boolean);
   const nodeEnv = configService.get<string>('NODE_ENV', 'development');
+  if (nodeEnv === 'production' && (originList.length === 0 || originList.includes('*'))) {
+    throw new Error('CORS_ORIGINS must list explicit origins in production');
+  }
   // Mobile / Expo web: empty CORS_ORIGINS + dev → reflect Origin so LAN testing works.
   app.enableCors({
     origin: originList.includes('*')
@@ -57,9 +67,11 @@ async function bootstrap() {
       transform: true,
     }),
   );
-  app.useGlobalFilters(new HttpExceptionFilter());
-  app.useGlobalInterceptors(new TransformInterceptor());
 
+  const swaggerEnabled =
+    nodeEnv !== 'production' ||
+    configService.get<string>('ENABLE_SWAGGER') === 'true';
+  if (swaggerEnabled) {
   const config = new DocumentBuilder()
     .setTitle('ComLinkr API')
     .setDescription('Community-First Housing & Lifestyle Discovery Platform')
@@ -67,6 +79,7 @@ async function bootstrap() {
     .build();
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('api/docs', app, document);
+  }
 
   const port = configService.get<number>('PORT', 4000);
   await app.listen(port, '0.0.0.0');
@@ -74,6 +87,8 @@ async function bootstrap() {
   console.log(
     `ComLinkr API listening on 0.0.0.0:${port} (e.g. http://localhost:${port}/api)`,
   );
-  console.log(`Swagger docs at http://localhost:${port}/api/docs`);
+  if (swaggerEnabled) {
+    console.log(`Swagger docs at http://localhost:${port}/api/docs`);
+  }
 }
 void bootstrap();

@@ -56,7 +56,7 @@ export class AuthGuard implements CanActivate {
    * Returns true if a valid user was attached; false otherwise (never throws).
    */
   private async tryAttachUserFromSession(request: {
-    session?: { userId?: string };
+    session?: { userId?: string; sv?: number };
     user?: unknown;
   }): Promise<boolean> {
     const userId = request.session?.userId;
@@ -72,10 +72,16 @@ export class AuthGuard implements CanActivate {
         isActive: true,
         deletedAt: true,
         onboardingCompleted: true,
+        sessionVersion: true,
       },
     });
 
     if (!user) {
+      return false;
+    }
+
+    // Sessions issued before a password reset / suspension carry a stale epoch.
+    if ((request.session?.sv ?? 0) !== user.sessionVersion) {
       return false;
     }
 

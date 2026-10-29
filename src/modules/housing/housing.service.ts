@@ -276,12 +276,29 @@ export class HousingService {
         message: 'Listing not found',
       });
     }
-    this.prisma.housingListing
-      .update({
-        where: { id: listingId },
-        data: { viewsCount: { increment: 1 } },
-      })
-      .catch(() => {});
+    // SEC-04: same visibility as browse; owner and admin may see any status.
+    if (listing.status !== 'AVAILABLE' && listing.ownerId !== userId) {
+      const viewer = userId
+        ? await this.prisma.user.findUnique({
+            where: { id: userId },
+            select: { role: true },
+          })
+        : null;
+      if (viewer?.role !== 'ADMIN') {
+        throw new NotFoundException({
+          code: 'RESOURCE_NOT_FOUND',
+          message: 'Listing not found',
+        });
+      }
+    }
+    if (listing.status === 'AVAILABLE' && listing.ownerId !== userId) {
+      this.prisma.housingListing
+        .update({
+          where: { id: listingId },
+          data: { viewsCount: { increment: 1 } },
+        })
+        .catch(() => {});
+    }
     const withCount = { ...listing, interestCount: listing._count.interests };
     return this.formatListing(withCount, userId);
   }

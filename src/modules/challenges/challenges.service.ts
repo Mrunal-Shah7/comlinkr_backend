@@ -284,23 +284,28 @@ export class ChallengesService {
         participantCount: challenge.participantCount,
       };
     }
+    // REL-02: capacity is claimed atomically; a full challenge matches zero rows.
     const maxParticipants = challenge.maxParticipants;
-    if (
-      maxParticipants != null &&
-      challenge.participantCount >= maxParticipants
-    ) {
-      throw new BadRequestException({
-        code: 'BAD_REQUEST',
-        message: 'This challenge is full.',
-      });
-    }
     const newCount = await this.prisma.$transaction(async (tx) => {
+      const claimed = await tx.challenge.updateMany({
+        where:
+          maxParticipants != null
+            ? { id: challengeId, participantCount: { lt: maxParticipants } }
+            : { id: challengeId },
+        data: { participantCount: { increment: 1 } },
+      });
+      if (claimed.count !== 1) {
+        throw new BadRequestException({
+          code: 'BAD_REQUEST',
+          message: 'This challenge is full.',
+        });
+      }
       await tx.challengeParticipant.create({
         data: { challengeId, userId },
       });
-      const updated = await tx.challenge.update({
+      const updated = await tx.challenge.findUniqueOrThrow({
         where: { id: challengeId },
-        data: { participantCount: { increment: 1 } },
+        select: { participantCount: true },
       });
       return updated.participantCount;
     });

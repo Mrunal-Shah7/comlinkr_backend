@@ -84,6 +84,7 @@ export class NewsService {
     this.trackActiveLocation(c, co);
     const cacheKey = this.fullCacheKey(c, co, state); // SPRINT-30
     const hit = this.cache.get(cacheKey);
+    force = this.effectiveForce(force, hit);
     if (!force && this.isFresh(hit, this.ttlMs)) {
       return this.toPagedPayload(
         hit.data,
@@ -184,6 +185,24 @@ export class NewsService {
    * SPRINT-58: a cache entry is fresh within its TTL, except an empty one, which expires
    * on the much shorter empty TTL.
    */
+  /** REL-04: bounded cache — evict the oldest entry once the cap is reached. */
+  private readonly maxCacheEntries = 200;
+  private setCache(key: string, entry: CacheEntry): void {
+    if (!this.cache.has(key) && this.cache.size >= this.maxCacheEntries) {
+      const oldest = this.cache.keys().next().value;
+      if (oldest !== undefined) this.cache.delete(oldest);
+    }
+    this.cache.delete(key); // refresh insertion order
+    this.cache.set(key, entry);
+  }
+
+  /** Forced refresh is allowed at most once per minute per key. */
+  private effectiveForce(force: boolean, hit?: CacheEntry): boolean {
+    if (!force) return false;
+    if (!hit) return true;
+    return Date.now() - new Date(hit.cachedAt).getTime() > 60_000;
+  }
+
   private isFresh(
     entry: CacheEntry | undefined,
     ttlMs: number,
@@ -256,7 +275,7 @@ export class NewsService {
     });
 
     const cachedAt = new Date().toISOString();
-    this.cache.set(cacheKey, {
+    this.setCache(cacheKey, {
       ts: Date.now(),
       phase: 'full',
       cachedAt,
@@ -272,7 +291,7 @@ export class NewsService {
           current.phase !== 'full'
         )
           return;
-        this.cache.set(cacheKey, {
+        this.setCache(cacheKey, {
           ts: Date.now(),
           phase: 'full',
           cachedAt,
@@ -335,7 +354,7 @@ export class NewsService {
     });
 
     const cachedAt = new Date().toISOString();
-    this.cache.set(cacheKey, {
+    this.setCache(cacheKey, {
       ts: Date.now(),
       phase: 'primary',
       cachedAt,

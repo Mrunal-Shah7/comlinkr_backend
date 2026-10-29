@@ -1,5 +1,5 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEnum, IsIn, IsOptional, IsString } from 'class-validator';
+import { IsEnum, IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
 import { Type } from 'class-transformer';
 import { CommunityQuestionCategory } from '@prisma/client';
 import { PaginationDto } from '../../../common/dto/pagination.dto';
@@ -27,4 +27,10 @@ export class CommunityQueryDto extends PaginationDto {
   @IsIn(['recent', 'trending'])
   @Type(() => String)
   sort?: string;
+
+  @ApiPropertyOptional({ description: 'Case-insensitive text search over title/body' })
+  @IsOptional()
+  @IsString()
+  @MaxLength(100)
+  search?: string;
 }

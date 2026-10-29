@@ -24,6 +24,10 @@ export class MailService {
         console.log(
           `[DEV] No Resend credentials — OTP logged only: ${to} (${type}): ${code}`,
         );
+      } else {
+        console.error(
+          `[MAIL] Mail provider is not configured; ${type} OTP email was NOT sent`,
+        );
       }
       return;
     }
@@ -63,9 +67,6 @@ export class MailService {
         subject,
         html,
       });
-      if (isDev) {
-        console.log(`[DEV] OTP email sent to ${to} (${type}); code: ${code}`);
-      }
     } catch (err) {
       console.error('Failed to send OTP email:', err);
       if (isDev) {

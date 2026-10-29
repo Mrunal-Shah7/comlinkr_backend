@@ -1516,7 +1516,7 @@ export class AdminService {
       if (!user) throw new NotFoundException('Reported user not found');
       await tx.user.update({
         where: { id: userId },
-        data: { isActive: false },
+        data: { isActive: false, sessionVersion: { increment: 1 } },
       });
       await tx.banRecord.create({
         data: {
@@ -1844,7 +1844,7 @@ export class AdminService {
       await this.prisma.$transaction([
         this.prisma.user.update({
           where: { id: userId },
-          data: { isActive: false },
+          data: { isActive: false, sessionVersion: { increment: 1 } },
         }),
         this.prisma.roommatePreferences.updateMany({
           where: { userId },

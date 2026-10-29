@@ -117,6 +117,16 @@ export class SettingsService {
     return { message: 'Account updated successfully' };
   }
 
+  /** Invalidates all sessions issued before this call; returns the new epoch. */
+  async bumpSessionVersion(userId: string): Promise<number> {
+    const row = await this.prisma.user.update({
+      where: { id: userId },
+      data: { sessionVersion: { increment: 1 } },
+      select: { sessionVersion: true },
+    });
+    return row.sessionVersion;
+  }
+
   async getPrivacy(userId: string) {
     const prefs = await this.prisma.privacySettings.findUnique({
       where: { userId },

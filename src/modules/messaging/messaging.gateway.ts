@@ -1,4 +1,4 @@
-import { Logger } from '@nestjs/common';
+import { Logger, OnModuleDestroy } from '@nestjs/common';
 import {
   OnGatewayConnection,
   OnGatewayDisconnect,
@@ -59,7 +59,11 @@ export interface NotificationCreatedPayload {
   },
 })
 export class MessagingGateway
-  implements OnGatewayInit, OnGatewayConnection, OnGatewayDisconnect
+  implements
+    OnGatewayInit,
+    OnGatewayConnection,
+    OnGatewayDisconnect,
+    OnModuleDestroy
 {
   @WebSocketServer()
   server!: Server;
@@ -68,6 +72,8 @@ export class MessagingGateway
   private readonly userSockets = new Map<string, Set<string>>();
   private readonly socketUsers = new Map<string, string>();
   private readonly typingThrottle = new Map<string, number>(); // SPRINT-36: throttle ephemeral typing-start events per socket and conversation
+  private sessionStore?: { get: (sid: string, cb: (err: any, s?: any) => void) => void };
+  private revalidateTimer?: NodeJS.Timeout;
   private sessionMiddleware!: (
     req: any,
     res: any,
@@ -84,14 +90,82 @@ export class MessagingGateway
     const redisClient = this.redisService.getClient();
     const options = getSessionOptions(redisClient);
     this.sessionMiddleware = session(options);
+    this.sessionStore = options.store as any;
+    // SEC-03: drop sockets whose session was revoked, expired or suspended.
+    this.revalidateTimer = setInterval(() => {
+      void this.revalidateAllSockets();
+    }, 20_000);
+    this.revalidateTimer.unref?.();
     server.use((socket: any, next: (err?: Error) => void) => {
       this.sessionMiddleware(socket.request, {} as any, next); // SPRINT-36: restore normal session middleware after diagnostic completion
     });
   }
 
+  onModuleDestroy() {
+    if (this.revalidateTimer) clearInterval(this.revalidateTimer);
+  }
+
+  private loadSession(sid: string): Promise<any | null> {
+    return new Promise((resolve) => {
+      if (!this.sessionStore || !sid) return resolve(null);
+      this.sessionStore.get(sid, (err, sess) => resolve(err ? null : (sess ?? null)));
+    });
+  }
+
+  /** Session still stored, user active, session epoch current. */
+  private async isSocketAuthorized(socket: any): Promise<boolean> {
+    const sid: string | undefined = socket.request?.sessionID;
+    const userId: string | undefined = socket.userId ?? socket.request?.session?.userId;
+    if (!sid || !userId) return false;
+    const sess = await this.loadSession(sid);
+    if (!sess || sess.userId !== userId) return false;
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { isActive: true, sessionVersion: true },
+    });
+    if (!user || !user.isActive) return false;
+    return (sess.sv ?? 0) === user.sessionVersion;
+  }
+
+  private async revalidateAllSockets(): Promise<void> {
+    if (!this.server) return;
+    const sockets = (this.server as unknown as Namespace).sockets;
+    for (const socket of sockets.values() as Iterable<any>) {
+      try {
+        if (!(await this.isSocketAuthorized(socket))) socket.disconnect(true);
+      } catch {
+        // transient lookup failure: retry on the next sweep
+      }
+    }
+  }
+
+  /** Per-event gate with a short cache so chatty events stay cheap. */
+  private async ensureAuthorized(socket: any): Promise<boolean> {
+    const now = Date.now();
+    if (socket.authCheckedAt && now - socket.authCheckedAt < 5_000) return true;
+    const ok = await this.isSocketAuthorized(socket);
+    if (!ok) {
+      socket.disconnect(true);
+      return false;
+    }
+    socket.authCheckedAt = now;
+    return true;
+  }
+
   async handleConnection(socket: any) {
     const req = socket.request as { session?: { userId?: string } };
     const userId = req.session?.userId;
+    if (userId) {
+      socket.userId = userId;
+      if (!(await this.isSocketAuthorized(socket))) {
+        this.logger.warn(
+          `[Socket Auth] failed socket=${socket.id} reason=session-invalid`,
+        );
+        socket.disconnect(true);
+        return;
+      }
+      socket.authCheckedAt = Date.now();
+    }
     if (!userId) {
       this.logger.warn(
         // SPRINT-36: permanently surface handshake authentication failures
@@ -133,7 +207,7 @@ export class MessagingGateway
 
     if (wasEmpty) {
       const partnerIds =
-        await this.messagingService.getConversationPartnerIds(userId);
+        await this.messagingService.getPresenceRecipientIds(userId);
       for (const pid of partnerIds) {
         const sockets = this.getUserSockets(pid);
         for (const sid of sockets) {
@@ -156,7 +230,7 @@ export class MessagingGateway
       if (set.size === 0) {
         this.userSockets.delete(userId);
         void this.messagingService
-          .getConversationPartnerIds(userId)
+          .getPresenceRecipientIds(userId)
           .then((partnerIds) => {
             for (const pid of partnerIds) {
               const sockets = this.getUserSockets(pid);
@@ -256,7 +330,7 @@ export class MessagingGateway
   @SubscribeMessage('join_conversation')
   async onJoinConversation(socket: any, payload: { conversationId: string }) {
     const userId = socket.userId;
-    if (!userId) return;
+    if (!userId || !(await this.ensureAuthorized(socket))) return;
     const result = await this.joinConversation(
       socket.id,
       payload.conversationId,
@@ -280,7 +354,7 @@ export class MessagingGateway
     payload: { conversationId: string; content: string; type?: string },
   ) {
     const userId = socket.userId;
-    if (!userId) return;
+    if (!userId || !(await this.ensureAuthorized(socket))) return;
     const { conversationId, content, type } = payload;
     if (
       !content ||
@@ -323,7 +397,7 @@ export class MessagingGateway
   @SubscribeMessage('typing_start')
   async onTypingStart(socket: any, payload: { conversationId: string }) {
     const userId = socket.userId;
-    if (!userId) return;
+    if (!userId || !(await this.ensureAuthorized(socket))) return;
     const conversationId = payload?.conversationId; // SPRINT-36: normalize the untrusted typing target
     if (!conversationId || typeof conversationId !== 'string') return; // SPRINT-36: ignore malformed ephemeral events silently
     const member = await this.messagingService.findMemberByConversationAndUser(
@@ -353,7 +427,7 @@ export class MessagingGateway
   async onTypingStop(socket: any, payload: { conversationId: string }) {
     // SPRINT-36: verify stop events with the same rules as start events
     const userId = socket.userId;
-    if (!userId) return;
+    if (!userId || !(await this.ensureAuthorized(socket))) return;
     const conversationId = payload?.conversationId; // SPRINT-36: normalize the untrusted typing target
     if (!conversationId || typeof conversationId !== 'string') return; // SPRINT-36: ignore malformed ephemeral events silently
     const member = await this.messagingService.findMemberByConversationAndUser(
@@ -382,7 +456,7 @@ export class MessagingGateway
     payload: { conversationId: string; messageId: string },
   ) {
     const userId = socket.userId;
-    if (!userId) return;
+    if (!userId || !(await this.ensureAuthorized(socket))) return;
     const { conversationId, messageId } = payload;
     try {
       await this.messagingService.markAsRead(userId, conversationId);

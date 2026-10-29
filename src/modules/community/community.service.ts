@@ -106,6 +106,13 @@ export class CommunityService {
     if (query.category) {
       where.category = query.category;
     }
+    const term = query.search?.trim();
+    if (term) {
+      where.OR = [
+        { title: { contains: term, mode: 'insensitive' } },
+        { body: { contains: term, mode: 'insensitive' } },
+      ];
+    }
 
     const sort = query.sort ?? 'recent';
     const orderBy =
@@ -550,12 +557,7 @@ export class CommunityService {
     };
   }
 
-  private async ensureDefaultPollsForCity(city: string) {
-    const count = await this.prisma.communityPoll.count({
-      where: { city: { equals: city, mode: 'insensitive' } },
-    });
-    if (count > 0) return;
-
+  private defaultPollTemplates() {
     const defaults: {
       category: string;
       question: string;
@@ -593,18 +595,61 @@ export class CommunityService {
       },
     ];
 
-    await this.prisma.communityPoll.createMany({
-      data: defaults.map((d) => ({
-        city,
-        category: d.category,
-        question: d.question,
-        optionAId: 'a',
-        optionALabel: d.optionALabel,
-        optionBId: 'b',
-        optionBLabel: d.optionBLabel,
-        votesA: d.votesA,
-        votesB: d.votesB,
-      })),
+    return defaults;
+  }
+
+  /** SEC-10: GET never writes. Returns unsaved templates until a vote materializes them. */
+  private templatePollRows(city: string) {
+    const now = new Date();
+    return this.defaultPollTemplates().map((d, i) => ({
+      id: `tpl:${i}:${encodeURIComponent(city)}`,
+      city,
+      category: d.category,
+      question: d.question,
+      optionAId: 'a',
+      optionALabel: d.optionALabel,
+      optionBId: 'b',
+      optionBLabel: d.optionBLabel,
+      votesA: 0,
+      votesB: 0,
+      isActive: true,
+      expiresAt: null,
+      createdAt: now,
+      updatedAt: now,
+    }));
+  }
+
+  /**
+   * Persist the default polls for a city that real users belong to, serialized
+   * per city so concurrent first votes cannot duplicate rows.
+   */
+  private async materializeDefaultPollsForCity(city: string) {
+    const known = await this.prisma.userLocation.count({
+      where: { city: { equals: city, mode: 'insensitive' } },
+    });
+    if (known === 0) {
+      throw new NotFoundException({
+        code: 'RESOURCE_NOT_FOUND',
+        message: 'Poll not found',
+      });
+    }
+    await this.prisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${city.toLowerCase()}))`;
+      const count = await tx.communityPoll.count({
+        where: { city: { equals: city, mode: 'insensitive' } },
+      });
+      if (count > 0) return;
+      await tx.communityPoll.createMany({
+        data: this.templatePollRows(city).map((d) => ({
+          city,
+          category: d.category,
+          question: d.question,
+          optionAId: 'a',
+          optionALabel: d.optionALabel,
+          optionBId: 'b',
+          optionBLabel: d.optionBLabel,
+        })),
+      });
     });
   }
 
@@ -616,7 +661,7 @@ export class CommunityService {
       return [];
     }
 
-    await this.ensureDefaultPollsForCity(city);
+    if (city.length > 100) return [];
 
     const polls = await this.prisma.communityPoll.findMany({
       where: {
@@ -627,7 +672,15 @@ export class CommunityService {
       orderBy: { createdAt: 'asc' },
     });
 
-    if (polls.length === 0) return [];
+    if (polls.length === 0) {
+      const anyForCity = await this.prisma.communityPoll.count({
+        where: { city: { equals: city, mode: 'insensitive' } },
+      });
+      if (anyForCity > 0) return [];
+      return this.templatePollRows(city).map((t) =>
+        this.formatPollRow(t as any, null, { votesA: 0, votesB: 0 }),
+      );
+    }
 
     const pollIds = polls.map((p) => p.id);
     const [myVotes, countsMap] = await Promise.all([
@@ -649,7 +702,34 @@ export class CommunityService {
     );
   }
 
-  async votePoll(userId: string, pollId: string, optionId: string) {
+  async votePoll(userId: string, pollIdIn: string, optionId: string) {
+    let pollId = pollIdIn;
+    if (pollId.startsWith('tpl:')) {
+      const [, idxRaw, cityEnc] = pollId.split(':');
+      const idx = Number(idxRaw);
+      const city = decodeURIComponent(cityEnc ?? '').trim();
+      const template = this.defaultPollTemplates()[idx];
+      if (!template || !city || city.length > 100) {
+        throw new NotFoundException({
+          code: 'RESOURCE_NOT_FOUND',
+          message: 'Poll not found',
+        });
+      }
+      await this.materializeDefaultPollsForCity(city);
+      const real = await this.prisma.communityPoll.findFirst({
+        where: {
+          city: { equals: city, mode: 'insensitive' },
+          question: template.question,
+        },
+      });
+      if (!real) {
+        throw new NotFoundException({
+          code: 'RESOURCE_NOT_FOUND',
+          message: 'Poll not found',
+        });
+      }
+      pollId = real.id;
+    }
     const poll = await this.prisma.communityPoll.findUnique({
       where: { id: pollId },
     });
